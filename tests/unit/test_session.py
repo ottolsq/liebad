@@ -149,6 +149,29 @@ class CaptionSessionTest(unittest.TestCase):
         self.assertEqual(recognizer.calls[-1], int(SAMPLE_RATE * 0.6) + FRAME_SAMPLES)
         self.assertIn(CaptionState.FINISHING, sink.states)
 
+    def test_subframe_tail_reaches_recognizer_after_stop(self):
+        tail = [0.5] * 100
+        recognizer = ScriptedRecognizer(["安静"], marker="尾音")
+        source = ListSource([[0.3] * (SAMPLE_RATE // 2), tail])
+        session, _ = self.make_session(source, recognizer)
+
+        snapshot = session.run()
+
+        self.assertEqual(snapshot.state, CaptionState.COMPLETED)
+        self.assertEqual(snapshot.final, (FinalCaption(0, "尾音"),))
+        self.assertEqual(recognizer.calls[-1], SAMPLE_RATE // 2 + len(tail))
+
+    def test_stop_finalizes_subframe_audio_once(self):
+        recognizer = ScriptedRecognizer(["安静"], marker="尾音")
+        source = ListSource([[0.5] * 200])
+        session, _ = self.make_session(source, recognizer)
+
+        snapshot = session.run()
+
+        self.assertEqual(snapshot.state, CaptionState.COMPLETED)
+        self.assertEqual(snapshot.final, (FinalCaption(0, "尾音"),))
+        self.assertEqual(recognizer.calls, [200])
+
     def test_repeated_text_in_separate_segments_is_kept(self):
         recognizer = ScriptedRecognizer(["同一句"])
         source = ListSource([speech(0.5), silence(1.0), speech(0.5), silence(0.8)])

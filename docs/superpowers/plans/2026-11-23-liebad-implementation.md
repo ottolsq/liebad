@@ -62,7 +62,7 @@ write_txt(path: Path, captions: Sequence[FinalCaption]) -> None
 - [x] `run()` 在后台消费音源并发布独立快照，正常状态依次为 `CAPTURING`、`FINISHING`、`COMPLETED`。`request_stop()` 线程安全且幂等，通知音源结束接收，`blocks()` 排空后结束迭代，会话再识别余音。音源在生产线程释放资源，采集和推理异常发布 `FAULTED` 与可读原因。
 - [x] `test_export_writes_utf8_in_final_order` 用 `write_txt` 写两条中文定稿，严格按 UTF-8 解码并断言按定稿顺序逐段一行。用批准的构建后端完成包配置，执行 `& $python -m pip install -e .` 和 `& $python -m unittest discover -s tests/unit`，预期退出码均为 `0`。
 
-**记录**　实测见[测试记录](../../test-records.md)。构建后端为 setuptools；`pip install -e .` 在 `workspace-write` 沙箱下因 pip 的 0700 临时目录被拒（`[Errno 13] Permission denied`），经用户确认用一次性完全权限执行后通过，`pip check` 与该批 8 个单测退出码均为 `0`。首跑有 1 个用例失败，原因是断言草稿序列恰好 2 条（实际 3 条），已删除该计数断言。
+**记录**　实测见[测试记录](../../test-records.md)。构建后端为 setuptools；`pip install -e .` 在 `workspace-write` 沙箱下因 pip 的 0700 临时目录被拒（`[Errno 13] Permission denied`），经用户确认用一次性完全权限执行后通过，`pip check` 与该批 8 个单测退出码均为 `0`。首跑有 1 个用例失败，原因是断言草稿序列恰好 2 条（实际 3 条），已删除该计数断言。补回归时发现 `_feed` 只派发完整 20 ms 帧，停止时不足一帧的尾音留在缓冲区被丢弃；先加两条失败用例，再加 `_flush_tail()` 把残余样本并入最后语段后定稿，10 个用例全过。
 
 ## 3. 接入 Whisper 和麦克风
 

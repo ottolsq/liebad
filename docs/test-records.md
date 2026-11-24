@@ -5,7 +5,7 @@
 | 批次 | 日期 | 范围 | 结论 |
 |---|---|---|---|
 | 1 | 2026-11-24 | 本地工具链与 Whisper 中文转写 | 工具链通过；`small` 模型可用，需固定 `language="zh"`、做增益归一化，并后置繁转简 |
-| 2 | 2026-11-24 | 字幕会话与 TXT 导出 | 8 个单测通过；可编辑安装成功，依赖固定到 `pyproject.toml` |
+| 2 | 2026-11-24 | 字幕会话与 TXT 导出 | 10 个单测通过；可编辑安装成功，依赖固定到 `pyproject.toml` |
 
 ## 第 1 批：本地工具链与 Whisper
 
@@ -130,7 +130,7 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 | `src/liebad/contracts.py` | `AudioBlock`、`AudioSource`/`SpeechRecognizer` 协议、`FinalCaption`、`CaptionState`、`CaptionSnapshot`、`CaptionOptions` |
 | `src/liebad/session.py` | `CaptionSession`：20 ms 帧、RMS 判语音、停顿与 12 s 上限定稿、共同前缀固定、停止排空余音 |
 | `src/liebad/export_txt.py` | `write_txt`：按定稿顺序逐段一行、UTF-8、换行写 `\n` |
-| `tests/unit/test_session.py` | 7 个会话用例 |
+| `tests/unit/test_session.py` | 9 个会话用例，含两条不足一帧尾音的回归 |
 | `tests/unit/test_export_txt.py` | 1 个导出用例 |
 
 ### 实施过程
@@ -140,6 +140,7 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 3. `pip install -e .` 在 `workspace-write` 沙箱下失败：`ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied: 'C:\Users\ottol\AppData\Local\Temp\dsh-OHTl73\pip-build-tracker-4o1ocdww\e0d3f...'`。根因与第 1 批 ensurepip 相同：pip 用 `tempfile.mkdtemp()` 建临时目录，而 CPython 在 Windows 把 `0700` 落成受保护 DACL（`icacls` 都读不到），本会话进程在受限令牌下运行，写入被拒；默认模式或 `0o777` 建出的目录继承父目录 ACL，可正常写入。
 4. 经用户确认，用一次性完全权限执行同一条 `& $python -m pip install -e .`，构建通过，随后恢复 `workspace-write`。
 5. 导出用例不用 `tempfile.TemporaryDirectory()`（同样受 0700 DACL 影响），改为在系统临时目录下用默认模式建目录，并在 `addCleanup` 里删除。
+6. 补回归时发现缺陷：`_feed` 只派发完整 20 ms 帧，音源结束时不足一帧的尾音留在缓冲区里被丢掉，`_finalize` 拿到的是不含尾音的音频；若整段不足一帧，则完全不会调识别器。先写两条失败用例（`test_subframe_tail_reaches_recognizer_after_stop`、`test_stop_finalizes_subframe_audio_once`，均 `FAILED`），再加 `_flush_tail()` 把残余样本并入当前语段后定稿，两条转绿。
 
 ### 结果
 
@@ -148,7 +149,7 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 | `& $python -m pip install -e .` | 退出码 `0` | `Successfully built liebad`、`Successfully installed liebad-0.1.0`，退出码 `0` |
 | `& $python -m pip check` | 退出码 `0` | `No broken requirements found.`，退出码 `0` |
 | `& $python -c "import liebad"` | 版本 `0.1.0`，指向 `src/liebad` | `version 0.1.0`、`file C:\Users\ottol\myproject\liebad\src\liebad\__init__.py`，退出码 `0` |
-| `& $python -m unittest discover -s tests/unit` | 8 个用例全过 | `Ran 8 tests in 0.064s`、`OK`，退出码 `0` |
+| `& $python -m unittest discover -s tests/unit` | 10 个用例全过 | `Ran 10 tests in 0.052s`、`OK`，退出码 `0` |
 
 ### 命令
 
@@ -161,6 +162,6 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 
 ### 结论与待办
 
-- 稳定的字幕开头、停顿定稿、停止时尾段恰好定稿一次、重复文字分段保留、静音不触发识别、12 s 强制分段，都已有固定结果覆盖，第 3 批可直接复用 `CaptionSession`。
+- 稳定的字幕开头、停顿定稿、停止时尾段恰好定稿一次、重复文字分段保留、静音不触发识别、12 s 强制分段，都已有固定结果覆盖，第 3 批可直接复用 `CaptionSession`；停止时不足一帧的尾音现在经 `_flush_tail()` 并入最后一段，只定稿一次，有两条回归用例。
 - 依赖版本已固定到 `pyproject.toml`，`opencc` 不再只存在于 `.venv`。
 - 沙箱限制：本会话里任何 `pip` 安装都会创建 0700 临时目录而失败，需要一次性完全权限；后续安装依赖沿用这条路径。

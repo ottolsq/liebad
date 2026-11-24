@@ -123,6 +123,7 @@ class CaptionSession:
         try:
             for block in self._source.blocks():
                 self._feed(block.samples)
+            self._flush_tail()
             self._finalize(self._segment, trim_silence=True)
         except Exception as exc:  # noqa: BLE001 - surfaced through the snapshot
             self._publish(
@@ -141,21 +142,50 @@ class CaptionSession:
             del buffer[:FRAME_SAMPLES]
             self._handle_frame(frame)
 
+    def _flush_tail(self) -> None:
+        """Fold the last short frame into the open segment before finalizing.
+
+        ``_feed`` only dispatches whole frames, so up to ``FRAME_SAMPLES - 1``
+        samples can be left over when the source drains. They still belong to
+        the last utterance and must reach the recognizer exactly once.
+        """
+
+        tail = self._frame_buffer
+        self._frame_buffer = []
+        if not tail:
+            return
+        speech = _rms(tail) >= self._options.speech_rms_threshold
+        segment = self._segment
+        if segment is None:
+            if not speech:
+                return
+            segment = self._open_segment()
+        self._extend(segment, tail, speech=speech)
+
+    def _open_segment(self) -> _Segment:
+        segment = _Segment(index=self._next_index)
+        self._next_index += 1
+        self._segment = segment
+        return segment
+
+    def _extend(
+        self, segment: _Segment, samples: Sequence[float], *, speech: bool
+    ) -> None:
+        segment.samples.extend(samples)
+        if speech:
+            segment.silence_samples = 0
+        else:
+            segment.silence_samples += len(samples)
+
     def _handle_frame(self, frame: Sequence[float]) -> None:
         speech = _rms(frame) >= self._options.speech_rms_threshold
         segment = self._segment
         if segment is None:
             if not speech:
                 return
-            segment = _Segment(index=self._next_index)
-            self._next_index += 1
-            self._segment = segment
+            segment = self._open_segment()
 
-        segment.samples.extend(frame)
-        if speech:
-            segment.silence_samples = 0
-        else:
-            segment.silence_samples += FRAME_SAMPLES
+        self._extend(segment, frame, speech=speech)
 
         if segment.silence_samples >= self._pause_samples:
             self._finalize(segment, trim_silence=True)
