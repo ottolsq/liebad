@@ -8,7 +8,15 @@ Liebad 为 Windows 上的现场讲话、抖音桌面客户端和浏览器视频�
 
 ## 快速开始
 
-可运行版本尚未实现。构建、测试和启动命令将在实现后以实际验证结果补充。
+可运行版本尚未实现，界面与麦克风采集在第 3 批接入。当前已验证包可以安装、单元测试可以运行（Windows、PowerShell，仓库根目录执行，解释器为 uv 装的 Python 3.12 建出的 `.venv`）：
+
+```powershell
+$python = (Resolve-Path .\.venv\Scripts\python.exe).Path
+& $python -m pip install -e .
+& $python -m unittest discover -s tests/unit
+```
+
+构建测试和启动命令将随原型完成补全。
 
 ## 文档
 

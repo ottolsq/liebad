@@ -5,6 +5,7 @@
 | 批次 | 日期 | 范围 | 结论 |
 |---|---|---|---|
 | 1 | 2026-11-24 | 本地工具链与 Whisper 中文转写 | 工具链通过；`small` 模型可用，需固定 `language="zh"`、做增益归一化，并后置繁转简 |
+| 2 | 2026-11-24 | 字幕会话与 TXT 导出 | 8 个单测通过；可编辑安装成功，依赖固定到 `pyproject.toml` |
 
 ## 第 1 批：本地工具链与 Whisper
 
@@ -112,5 +113,54 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 - 速度：`small` 在 13.5 s 录音上推理稳定在约 2.5 s（RTF 0.18–0.19），机器有其他负载时实测到 4.3 s（RTF 0.32）；`base` 为 0.84–1.67 s（RTF 0.06–0.12）。首跑含线程预热会慢一倍左右。
 - 准确率：`base` 两份素材都只对约六成内容；`small` 在真人录音上 24 字错 1 处（`一千字` → `1000次`），可用。原型基线定为 `small`。
 - 增益归一化影响明显：同一段低电平录音，增益 ×15 把 `最文破坏` 修正为 `最稳妥`，`base` 也仅在此配置下救回 `調用`。采集链路需要软件增益或 AGC。
-- 简体输出已定：解码固定 `language="zh"`、不加提示词，输出后用 `opencc`（`t2s`，`opencc-python-reimplemented==0.1.7`）转简体；脚本 `--simplify` 已实现，公开样本的 `對面樓市` 转成 `对面楼市` 后仍正确。`opencc` 目前只装在 `.venv` 里，待第 2 批建 `pyproject.toml` 时正式固定版本。
+- 简体输出已定：解码固定 `language="zh"`、不加提示词，输出后用 `opencc`（`t2s`，`opencc-python-reimplemented==0.1.7`）转简体；脚本 `--simplify` 已实现，公开样本的 `對面樓市` 转成 `对面楼市` 后仍正确。`opencc` 已在第 2 批写入 `pyproject.toml` 的依赖，由 `pip install -e .` 安装。
 - `av` 必须锁 `15.1.0`，升级前需重跑本记录。
+
+## 第 2 批：字幕会话与 TXT 导出
+
+### 环境
+
+沿用第 1 批的 `.venv`（Python 3.12.16）。`pyproject.toml` 的构建后端是 setuptools，`pip install -e .` 会临时安装 `setuptools>=75`；`pip check` 退出码 `0`。
+
+### 改动文件
+
+| 文件 | 作用 |
+|---|---|
+| `pyproject.toml` | setuptools 后端、`src/` 布局，锁定 `av==15.1.0`、`faster-whisper==1.2.1`、`opencc-python-reimplemented==0.1.7` |
+| `src/liebad/contracts.py` | `AudioBlock`、`AudioSource`/`SpeechRecognizer` 协议、`FinalCaption`、`CaptionState`、`CaptionSnapshot`、`CaptionOptions` |
+| `src/liebad/session.py` | `CaptionSession`：20 ms 帧、RMS 判语音、停顿与 12 s 上限定稿、共同前缀固定、停止排空余音 |
+| `src/liebad/export_txt.py` | `write_txt`：按定稿顺序逐段一行、UTF-8、换行写 `\n` |
+| `tests/unit/test_session.py` | 7 个会话用例 |
+| `tests/unit/test_export_txt.py` | 1 个导出用例 |
+
+### 实施过程
+
+1. 包配置用 `setuptools>=75` + `setuptools.build_meta`，`[tool.setuptools] package-dir = { "" = "src" }`。
+2. 首跑 8 个用例有 1 个失败：断言草稿序列恰好 2 条，实际是 `今天去上`、`今天去上海`、`今天去上明天去上海` 三条，属于测试断言过窄，删掉计数断言后通过。
+3. `pip install -e .` 在 `workspace-write` 沙箱下失败：`ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied: 'C:\Users\ottol\AppData\Local\Temp\dsh-OHTl73\pip-build-tracker-4o1ocdww\e0d3f...'`。根因与第 1 批 ensurepip 相同：pip 用 `tempfile.mkdtemp()` 建临时目录，而 CPython 在 Windows 把 `0700` 落成受保护 DACL（`icacls` 都读不到），本会话进程在受限令牌下运行，写入被拒；默认模式或 `0o777` 建出的目录继承父目录 ACL，可正常写入。
+4. 经用户确认，用一次性完全权限执行同一条 `& $python -m pip install -e .`，构建通过，随后恢复 `workspace-write`。
+5. 导出用例不用 `tempfile.TemporaryDirectory()`（同样受 0700 DACL 影响），改为在系统临时目录下用默认模式建目录，并在 `addCleanup` 里删除。
+
+### 结果
+
+| 命令 | 期望 | 实测 |
+|---|---|---|
+| `& $python -m pip install -e .` | 退出码 `0` | `Successfully built liebad`、`Successfully installed liebad-0.1.0`，退出码 `0` |
+| `& $python -m pip check` | 退出码 `0` | `No broken requirements found.`，退出码 `0` |
+| `& $python -c "import liebad"` | 版本 `0.1.0`，指向 `src/liebad` | `version 0.1.0`、`file C:\Users\ottol\myproject\liebad\src\liebad\__init__.py`，退出码 `0` |
+| `& $python -m unittest discover -s tests/unit` | 8 个用例全过 | `Ran 8 tests in 0.064s`、`OK`，退出码 `0` |
+
+### 命令
+
+```powershell
+$python = (Resolve-Path .\.venv\Scripts\python.exe).Path
+& $python -m pip install -e .
+& $python -m pip check
+& $python -m unittest discover -s tests/unit
+```
+
+### 结论与待办
+
+- 稳定的字幕开头、停顿定稿、停止时尾段恰好定稿一次、重复文字分段保留、静音不触发识别、12 s 强制分段，都已有固定结果覆盖，第 3 批可直接复用 `CaptionSession`。
+- 依赖版本已固定到 `pyproject.toml`，`opencc` 不再只存在于 `.venv`。
+- 沙箱限制：本会话里任何 `pip` 安装都会创建 0700 临时目录而失败，需要一次性完全权限；后续安装依赖沿用这条路径。

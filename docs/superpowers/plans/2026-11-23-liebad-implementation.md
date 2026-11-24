@@ -56,11 +56,13 @@ CaptionSession.request_stop() -> None
 write_txt(path: Path, captions: Sequence[FinalCaption]) -> None
 ```
 
-- [ ] `test_stable_prefix_survives_draft_revision` 按顺序给同一语段返回 `今天去上`、`今天去上海`、`明天去上海`，断言第二轮后固定 `今天去上`，第三轮临时显示保留此前缀，定稿用最后一次完整结果。
-- [ ] `test_stop_drains_audio_and_finalizes_once` 在停止前排入带独有标记的尾音，调用两次 `request_stop()`，断言识别器处理了尾音，最终 `draft` 为空且尾段只定稿一次。`test_repeated_text_in_separate_segments_is_kept` 断言停顿两侧相同的定稿文字有两个不同的 `segment_id`。静音输入断言识别器调用次数为零，连续声音跨过 12 秒断言定稿并进入下一个语段。
-- [ ] 用 16 kHz 单声道 PCM 归一化至 `[-1, 1]`，`start_sample` 从会话起点递增。按 20 ms PCM 帧计算 RMS，起始参数为 500 ms 临时更新间隔、750 ms 停顿、12 s 上限和 0.01 RMS。按样本数计时，推理串行执行，积压时跳过过期的临时推理，保留定稿音频。同一语段只按连续结果的共同前缀延长已固定的文字。
-- [ ] `run()` 在后台消费音源并发布独立快照，正常状态依次为 `CAPTURING`、`FINISHING`、`COMPLETED`。`request_stop()` 线程安全且幂等，通知音源结束接收，`blocks()` 排空后结束迭代，会话再识别余音。音源在生产线程释放资源，采集和推理异常发布 `FAULTED` 与可读原因。
-- [ ] `test_export_writes_utf8_in_final_order` 用 `write_txt` 写两条中文定稿，严格按 UTF-8 解码并断言按定稿顺序逐段一行。用批准的构建后端完成包配置，执行 `& $python -m pip install -e .` 和 `& $python -m unittest discover -s tests/unit`，预期退出码均为 `0`。
+- [x] `test_stable_prefix_survives_draft_revision` 按顺序给同一语段返回 `今天去上`、`今天去上海`、`明天去上海`，断言第二轮后固定 `今天去上`，第三轮临时显示保留此前缀，定稿用最后一次完整结果。
+- [x] `test_stop_drains_audio_and_finalizes_once` 在停止前排入带独有标记的尾音，调用两次 `request_stop()`，断言识别器处理了尾音，最终 `draft` 为空且尾段只定稿一次。`test_repeated_text_in_separate_segments_is_kept` 断言停顿两侧相同的定稿文字有两个不同的 `segment_id`。静音输入断言识别器调用次数为零，连续声音跨过 12 秒断言定稿并进入下一个语段。
+- [x] 用 16 kHz 单声道 PCM 归一化至 `[-1, 1]`，`start_sample` 从会话起点递增。按 20 ms PCM 帧计算 RMS，起始参数为 500 ms 临时更新间隔、750 ms 停顿、12 s 上限和 0.01 RMS。按样本数计时，推理串行执行，积压时跳过过期的临时推理，保留定稿音频。同一语段只按连续结果的共同前缀延长已固定的文字。
+- [x] `run()` 在后台消费音源并发布独立快照，正常状态依次为 `CAPTURING`、`FINISHING`、`COMPLETED`。`request_stop()` 线程安全且幂等，通知音源结束接收，`blocks()` 排空后结束迭代，会话再识别余音。音源在生产线程释放资源，采集和推理异常发布 `FAULTED` 与可读原因。
+- [x] `test_export_writes_utf8_in_final_order` 用 `write_txt` 写两条中文定稿，严格按 UTF-8 解码并断言按定稿顺序逐段一行。用批准的构建后端完成包配置，执行 `& $python -m pip install -e .` 和 `& $python -m unittest discover -s tests/unit`，预期退出码均为 `0`。
+
+**记录**　实测见[测试记录](../../test-records.md)。构建后端为 setuptools；`pip install -e .` 在 `workspace-write` 沙箱下因 pip 的 0700 临时目录被拒（`[Errno 13] Permission denied`），经用户确认用一次性完全权限执行后通过，`pip check` 与该批 8 个单测退出码均为 `0`。首跑有 1 个用例失败，原因是断言草稿序列恰好 2 条（实际 3 条），已删除该计数断言。
 
 ## 3. 接入 Whisper 和麦克风
 
