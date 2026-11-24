@@ -10,3 +10,6 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Stray logs dropped by system tools
+debug.log

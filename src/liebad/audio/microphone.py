@@ -19,7 +19,21 @@ WASAPI_NAME = "Windows WASAPI"
 DEFAULT_BLOCKSIZE = 1024
 
 #: Upper bound of queued raw blocks before the callback reports an overflow.
-DEFAULT_MAX_QUEUE = 64
+#: A 12 s segment costs several seconds of recognition on the closing path, so
+#: the buffer has to absorb roughly five seconds of audio.
+DEFAULT_MAX_QUEUE = 512
+
+#: The WASAPI capture path reports speech around RMS 0.005-0.008; whisper was
+#: validated with peaks near 0.3, so a modest fixed gain lifts speech into range.
+DEFAULT_GAIN = 6.0
+
+
+def _clamp(value: float) -> float:
+    if value > 1.0:
+        return 1.0
+    if value < -1.0:
+        return -1.0
+    return value
 
 
 def _wasapi_index() -> int | None:
@@ -59,6 +73,7 @@ class MicrophoneSource:
         channels: int = 1,
         blocksize: int = DEFAULT_BLOCKSIZE,
         max_queue: int = DEFAULT_MAX_QUEUE,
+        gain: float = DEFAULT_GAIN,
         stream_factory: Callable[[], Any] | None = None,
         converter_factory: Callable[[int, int], Pcm16kConverter] = Pcm16kConverter,
     ) -> None:
@@ -67,6 +82,7 @@ class MicrophoneSource:
         self._channels = channels
         self._blocksize = blocksize
         self._max_queue = max_queue
+        self._gain = float(gain)
         self._stream_factory = stream_factory or self._open_stream
         self._converter_factory = converter_factory
         self._queue: queue.Queue[bytes | None] = queue.Queue(maxsize=max_queue)
@@ -155,6 +171,10 @@ class MicrophoneSource:
                         break
                     samples = converter.convert(item)
                     if samples:
+                        if self._gain != 1.0:
+                            samples = [
+                                _clamp(value * self._gain) for value in samples
+                            ]
                         yield AudioBlock(samples=tuple(samples), start_sample=offset)
                         offset += len(samples)
                 tail = converter.flush()
@@ -178,6 +198,7 @@ class MicrophoneSource:
 
 __all__ = [
     "DEFAULT_BLOCKSIZE",
+    "DEFAULT_GAIN",
     "DEFAULT_MAX_QUEUE",
     "MicrophoneSource",
     "SAMPLE_RATE",

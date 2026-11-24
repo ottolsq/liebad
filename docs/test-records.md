@@ -7,6 +7,7 @@
 | 1 | 2026-11-24 | 本地工具链与 Whisper 中文转写 | 工具链通过；`small` 模型可用，需固定 `language="zh"`、做增益归一化，并后置繁转简 |
 | 2 | 2026-11-24 | 字幕会话与 TXT 导出 | 10 个单测通过；可编辑安装成功，依赖固定到 `pyproject.toml` |
 | 3 | 2026-11-24 | 接入 Whisper 和麦克风 | 21 个单测与集成测试通过；真实 WASAPI 采集到语音并转写成功，需做电平归一化 |
+| 4 | 2026-11-24 | 置顶悬浮窗原型 | 25 个单测通过；真实麦克风端到端跑通，首字约 2.0 s，置顶、停止导出、关闭后重开麦克风均实测通过 |
 
 ## 第 1 批：本地工具链与 Whisper
 
@@ -226,3 +227,64 @@ $env:LIEBAD_TEST_KEYWORD = "最稳妥"
 - WDM-KS 通道有 50–56 Hz 底噪且 RMS 常高于门限，会误触发语音判定，不作为默认通道。
 - 依赖安装仍需一次性完全权限：`pip` 与 `uv` 的构建临时目录都用 0700 目录。
 - 本批没有改 `CaptionSession`，第 4 批直接复用；集成测试要求素材先归一化到峰值 0.3。
+
+## 第 4 批：置顶悬浮窗原型
+
+### 环境
+
+沿用第 3 批的 `.venv`（Python 3.12.16、`faster-whisper` 1.2.1、CTranslate2 4.9.1、`av` 15.1.0、`onnxruntime` 1.32.0、`opencc-python-reimplemented` 0.1.7、`sounddevice` 0.5.6）。本批新增 `PySide6-Essentials==6.12.0`（带 `shiboken6==6.12.0`，`Prepared 2 packages in 35.91s`、`Installed 2 packages in 2.53s`），未装带 WebEngine 的完整 `PySide6` 包；`pip check` 退出码 `0`，`pip list --format=freeze` 共 33 行。
+
+模型两个：定稿用 `models\faster-whisper-small`，临时字幕用 `models\faster-whisper-base`（第 1 批下载，6 个文件齐全）。
+
+### 改动文件
+
+| 文件 | 作用 |
+|---|---|
+| `src/liebad/ui/overlay.py` | `CaptionOverlay`：置顶窗口铺满屏幕工作区顶部，麦克风下拉、「开始」「停止」「导出」、状态行、大字临时字幕与定稿行；`preload=True` 时加载并预热两个模型 |
+| `src/liebad/ui/session_worker.py` | `SessionWorker`：在 `QThread` 里先加载模型、再开麦克风建会话，把快照用 Qt 排队信号发回主线程；`partial_model_dir()` 解析临时字幕模型 |
+| `src/liebad/ui/__init__.py`、`src/liebad/__main__.py` | 导出界面类；`python -m liebad` 启动，窗口先显示再由定时器加载模型 |
+| `src/liebad/session.py` | 临时识别移到 `liebad-caption-inference` 线程（同语段只保留最新一次请求），定稿移到 `liebad-caption-final` 线程；`_freeze()` 冻结前缀只增不减；不足 `min_speech_ms` 的噪声瞬态不再定稿 |
+| `src/liebad/contracts.py` | `CaptionOptions` 新增 `min_speech_ms: int = 300` |
+| `src/liebad/audio/microphone.py` | 新增 `DEFAULT_GAIN = 6.0` 与限幅，`DEFAULT_MAX_QUEUE` 由 64 提到 512（约 11 s 缓冲） |
+| `src/liebad/whisper_recognizer.py` | 新增 `cpu_threads` 参数与 `warm_up()`（空音频、`beam_size=1`、`temperature=0` 的单次推理） |
+| `tests/unit/test_session.py` | 新增 4 个用例：`_freeze` 前缀只增不减、临时识别不阻塞采集、双模型分工、噪声瞬态不成字幕；共 25 个单测 |
+| `pyproject.toml` | 依赖新增 `PySide6-Essentials==6.12.0` |
+
+### 实施过程
+
+1. 先装 `PySide6-Essentials==6.12.0`，`QT_QPA_PLATFORM=offscreen` 下确认 `pyside 6.12.0 qt 6.12.0 screens 1`；离屏截图布局正确，但无字体目录时中文显示成方块，真机用系统字体正常。
+2. 首次端到端（真实麦克风、25 s）失败：30 s 内没有任何草稿、导出为空，直到 54 s 才冒出幻觉字幕 `字幕by索兰娅`。用 `temp\replay_session.py` 按实时喂 45 s 录音复现：同一段音频耗时 60.54 s，首个草稿在 8.30 s，之后每 3 s 才更新一次。
+3. 根因是 `_update_partial` 在消费线程里同步跑 Whisper（`small` 单次约 2.85–3.0 s），把音频消费卡住，`MicrophoneSource` 的 PortAudio 队列必然溢出。改为两条专用线程：临时请求按语段去重只算最新一次，定稿串行计算，消费线程不再调用识别器。
+4. 双模型基准（8 s 音频）：`small beam5 cpu_threads=0` 2.8 s/次、`small cpu_threads=1` 4.3 s、`base beam1` 0.65–0.69 s。于是定稿用 `small` + `cpu_threads=6`（2–2.8 s/次），临时字幕用 `base` + `beam_size=1` + `cpu_threads=2`（0.8–0.9 s/次），默认取主模型同级的 `faster-whisper-base`，可用 `LIEBAD_WHISPER_PARTIAL_MODEL` 覆盖。
+5. 电平：WASAPI 说话时 RMS 0.005–0.008、静音 1e-5，低于默认门限 0.01。采集侧加 `DEFAULT_GAIN=6.0` 与限幅，界面把 `speech_rms_threshold` 提到 0.02（增益后静音约 0.011 不再触发），并新增 `min_speech_ms=300`：此前 12 ms 的噪声瞬态就会定稿成 `字幕by索兰娅`。
+6. 首次出字：`base` 的第一次调用要 4.9 s（线程与算子预热），预热把这段开销挪到启动阶段；模型在点「开始」前加载好，麦克风等模型就绪后才打开，避免启动期音频在队列里积压（此前首字被拖到 20 s）。
+
+### 结果
+
+| 命令 / 场景 | 期望 | 实测 |
+|---|---|---|
+| `& $python -m unittest discover -s tests/unit` | 全过 | `Ran 25 tests in 1.076s`、`OK`，退出码 `0` |
+| `& $python -m pip check` | 退出码 `0` | `No broken requirements found.` |
+| 真实麦克风 25 s 会话（设备 18） | 出临时字幕与定稿 | 起声在采集域 4.52 s，首条草稿 6.5 s（**首字约 2.0 s**），草稿每 0.8 s 更新，定稿 1 段 `今天我们来验证本币 语音专写 算算段距和准确率`，退出码 `0` |
+| 停止后导出 TXT | UTF-8、顺序与定稿一致 | 单段写入 `temp\audio\ui_live.txt`，内容 `今天我们来验证本币 语音专写 算算段距和准确率`，与界面定稿逐字相同 |
+| 置顶 | 屏幕底部工作区顶部、始终置顶 | `window 1920x150 at 8,0`、`stay_on_top=True`，系统截图确认覆盖在桌面顶部 |
+| 讲话时关闭窗口 | 能正常关闭并释放麦克风 | `close took 1.83s`，`visible=False thread=None`，随后重开同一设备 1 s 采到 12,629 个样本 |
+| 连续两轮会话（WAV 回放） | 每轮只含本轮定稿 | 两轮各有 1 段，两份 TXT 都只含本轮文本，无上一轮残留 |
+
+### 命令
+
+```powershell
+$python = (Resolve-Path .\.venv\Scripts\python.exe).Path
+& $python -m unittest discover -s tests/unit
+$env:LIEBAD_WHISPER_MODEL = ".\models\faster-whisper-small"
+$env:LIEBAD_WHISPER_PARTIAL_MODEL = ".\models\faster-whisper-base"  # 可省略，默认取同级目录
+& $python -m liebad
+```
+
+### 结论与待办
+
+- 12 项验收里可自动化的部分全部实测通过：置顶位置、开始/停止、导出 UTF-8、关闭后重开麦克风、连续两轮不串。
+- 首字约 2.0 s（起声到首条临时字幕），临时字幕每 0.8 s 更新一次，定稿约 2.8 s/段；瓶颈是 `small` 的单次推理成本，再快需要换更小模型或加 VAD 缩短窗口。
+- 识别质量仍是短板：本轮 22 字错 3 处（`本地` → `本币`、`转写` → `专写`、`看看断句` → `算算段距`），临时字幕用 `base` 时错字更多，还会因为冻结前缀只增不减而累积重复。
+- 关闭窗口时 sounddevice 会打印 `can't open file for write !`（流关闭与回调的竞态），不影响退出和再次打开，待定位。
+- 安装仍需一次性完全权限 `pip install -e .`；`uv pip install -e .` 仍因 0700 构建目录报 `PermissionError: [WinError 5]`。

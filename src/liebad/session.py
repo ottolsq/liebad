@@ -2,9 +2,12 @@
 
 The session runs on a background thread. It slices audio into 20 ms frames,
 gates speech with an RMS threshold, asks the recognizer for provisional text
-while a segment is open, freezes the prefix shared by two consecutive results,
-and finalizes a segment after a pause, at the maximum length, or when the
-source drains. All timing is derived from sample counts, never wall clock.
+while a segment is open, freezes the prefix shared by consecutive results, and
+finalizes a segment after a pause, at the maximum length, or when the source
+drains. Provisional recognition runs on its own thread so that audio intake
+never waits for the model; a newer provisional request for the same segment
+replaces the queued one. All timing is derived from sample counts, never wall
+clock.
 """
 
 from __future__ import annotations
@@ -33,9 +36,11 @@ class _Segment:
     index: int
     samples: list[float] = field(default_factory=list)
     silence_samples: int = 0
+    speech_samples: int = 0
     partial_at: int = 0
     fixed: str = ""
     last_result: str = ""
+    closing: bool = False
     finalized: bool = False
 
 
@@ -45,6 +50,22 @@ def _common_prefix(left: str, right: str) -> str:
     while index < limit and left[index] == right[index]:
         index += 1
     return left[:index]
+
+
+def _freeze(fixed: str, last_result: str, text: str) -> tuple[str, str]:
+    """Extend the frozen prefix and return ``(fixed, draft)``.
+
+    The frozen part only ever grows: it is the common prefix of two
+    consecutive results for the same segment. The draft is that prefix
+    followed by whatever the latest result still leaves open.
+    """
+
+    if last_result:
+        prefix = _common_prefix(last_result, text)
+        if len(prefix) > len(fixed):
+            fixed = prefix
+    rest = text[len(fixed) :] if text.startswith(fixed) else text
+    return fixed, fixed + rest
 
 
 def _rms(frame: Sequence[float]) -> float:
@@ -63,9 +84,11 @@ class CaptionSession:
         recognizer: SpeechRecognizer,
         publish: Callable[[CaptionSnapshot], None],
         options: CaptionOptions | None = None,
+        partial_recognizer: SpeechRecognizer | None = None,
     ) -> None:
         self._source = source
         self._recognizer = recognizer
+        self._partial_recognizer = partial_recognizer or recognizer
         self._publish_callback = publish
         self._options = options or CaptionOptions()
         self._partial_samples = max(
@@ -73,8 +96,12 @@ class CaptionSession:
         )
         self._pause_samples = self._options.pause_duration_ms * SAMPLE_RATE // 1000
         self._max_samples = self._options.max_segment_ms * SAMPLE_RATE // 1000
+        self._min_speech_samples = self._options.min_speech_ms * SAMPLE_RATE // 1000
 
         self._lock = threading.Lock()
+        self._recognize_lock = threading.Lock()
+        self._partial_lock = self._recognize_lock if partial_recognizer is None else threading.Lock()
+        self._partial_ready = threading.Condition()
         self._stop_event = threading.Event()
         self._stop_forwarded = False
         self._started = False
@@ -88,6 +115,15 @@ class CaptionSession:
         self._segment: _Segment | None = None
         self._next_index = 0
 
+        self._partial_jobs: dict[int, list[float]] = {}
+        self._inference: threading.Thread | None = None
+        self._inference_stopped = False
+
+        self._final_jobs: list[tuple[int, list[float]]] = []
+        self._final_ready = threading.Condition()
+        self._final_draining = False
+        self._final_worker: threading.Thread | None = None
+
     def run(self) -> CaptionSnapshot:
         """Consume the whole source on a worker thread and return the final snapshot."""
 
@@ -97,11 +133,29 @@ class CaptionSession:
             self._started = True
         if not self._stop_event.is_set():
             self._publish(CaptionState.CAPTURING, "")
+        inference = threading.Thread(
+            target=self._infer, name="liebad-caption-inference", daemon=True
+        )
+        self._inference = inference
+        inference.start()
+        final_worker = threading.Thread(
+            target=self._recognize_finals, name="liebad-caption-final", daemon=True
+        )
+        self._final_worker = final_worker
+        final_worker.start()
         worker = threading.Thread(
             target=self._consume, name="liebad-caption-session", daemon=True
         )
         worker.start()
         worker.join()
+        with self._partial_ready:
+            self._inference_stopped = True
+            self._partial_ready.notify_all()
+        with self._final_ready:
+            self._final_draining = True
+            self._final_ready.notify_all()
+        inference.join()
+        final_worker.join()
         return self._snapshot
 
     def request_stop(self) -> None:
@@ -116,6 +170,63 @@ class CaptionSession:
         if publish_finishing:
             self._publish(CaptionState.FINISHING, self._draft)
         self._source.request_stop()
+
+    # -- final recognition thread
+
+    def _recognize_finals(self) -> None:
+        while True:
+            with self._final_ready:
+                while not self._final_jobs and not self._final_draining:
+                    self._final_ready.wait(timeout=0.1)
+                if not self._final_jobs:
+                    if self._final_draining:
+                        return
+                    continue
+                index, audio = self._final_jobs.pop(0)
+
+            with self._recognize_lock:
+                text = self._recognizer.recognize(audio)
+            if text:
+                with self._lock:
+                    self._finals.append(FinalCaption(segment_id=index, text=text))
+                    self._finals.sort(key=lambda caption: caption.segment_id)
+            self._publish(self._state, "")
+
+    # -- provisional recognition thread
+
+    def _infer(self) -> None:
+        while True:
+            with self._partial_ready:
+                while not self._partial_jobs and not self._inference_stopped:
+                    self._partial_ready.wait(timeout=0.1)
+                if not self._partial_jobs:
+                    if self._inference_stopped:
+                        return
+                    continue
+                index = next(reversed(self._partial_jobs))
+                audio = self._partial_jobs.pop(index)
+
+            with self._partial_lock:
+                with self._lock:
+                    segment = self._segment
+                    stale = (
+                        segment is None
+                        or segment.index != index
+                        or segment.closing
+                    )
+                if stale:
+                    continue
+                text = self._partial_recognizer.recognize(audio)
+
+            if segment is None or segment.index != index or segment.finalized:
+                continue
+            with self._lock:
+                segment.fixed, draft = _freeze(
+                    segment.fixed, segment.last_result, text
+                )
+                segment.last_result = text
+                state = self._state
+            self._publish(state, draft)
 
     # -- worker thread
 
@@ -174,6 +285,7 @@ class CaptionSession:
         segment.samples.extend(samples)
         if speech:
             segment.silence_samples = 0
+            segment.speech_samples += len(samples)
         else:
             segment.silence_samples += len(samples)
 
@@ -200,40 +312,50 @@ class CaptionSession:
 
     def _update_partial(self, segment: _Segment) -> None:
         segment.partial_at = len(segment.samples)
-        text = self._recognizer.recognize(list(segment.samples))
-        if segment.last_result:
-            prefix = _common_prefix(segment.last_result, text)
-            if len(prefix) > len(segment.fixed):
-                segment.fixed = prefix
-        segment.last_result = text
-        fixed = segment.fixed
-        rest = text[len(fixed) :] if text.startswith(fixed) else text
-        self._publish(self._state, fixed + rest)
+        with self._partial_ready:
+            self._partial_jobs[segment.index] = list(segment.samples)
+            self._partial_ready.notify()
 
     def _finalize(self, segment: _Segment | None, *, trim_silence: bool) -> None:
-        if segment is None or segment.finalized:
+        if segment is None or segment.finalized or segment.closing:
             return
-        segment.finalized = True
+        segment.closing = True
+        with self._partial_ready:
+            self._partial_jobs.pop(segment.index, None)
+        if segment.speech_samples < self._min_speech_samples:
+            # A blip of noise must not become a hallucinated caption.
+            with self._lock:
+                if self._segment is segment:
+                    self._segment = None
+            segment.finalized = True
+            self._publish(self._state, "")
+            return
         if trim_silence:
             keep = len(segment.samples) - segment.silence_samples
             audio = list(segment.samples[:keep]) if keep > 0 else []
         else:
             audio = list(segment.samples)
-        self._segment = None
+        with self._lock:
+            if self._segment is segment:
+                self._segment = None
+        segment.finalized = True
         if not audio:
             self._publish(self._state, "")
             return
-        text = self._recognizer.recognize(audio)
-        self._finals.append(FinalCaption(segment_id=segment.index, text=text))
-        self._publish(self._state, "")
+        with self._final_ready:
+            self._final_jobs.append((segment.index, audio))
+            self._final_ready.notify()
+        # Keep the frozen draft on screen until the final text replaces it.
+        self._publish(self._state, self._draft)
 
     def _publish(
         self, state: CaptionState, draft: str, error: str | None = None
     ) -> None:
-        snapshot = CaptionSnapshot(
-            state=state, draft=draft, final=tuple(self._finals), error=error
-        )
-        self._state = state
-        self._draft = draft
-        self._snapshot = snapshot
+        with self._lock:
+            self._state = state
+            self._draft = draft
+            snapshot = CaptionSnapshot(
+                state=state, draft=draft, final=tuple(self._finals), error=error
+            )
+            self._snapshot = snapshot
         self._publish_callback(snapshot)

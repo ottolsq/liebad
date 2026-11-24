@@ -52,6 +52,7 @@ class WhisperRecognizer:
         language: str | None = None,
         beam_size: int = 5,
         simplify: bool = True,
+        cpu_threads: int = 0,
     ) -> None:
         self._model_dir = Path(model_dir).expanduser()
         missing = [name for name in REQUIRED_FILES if not (self._model_dir / name).is_file()]
@@ -68,6 +69,7 @@ class WhisperRecognizer:
             device="cpu",
             compute_type="int8",
             local_files_only=True,
+            cpu_threads=cpu_threads,
         )
 
     @classmethod
@@ -83,6 +85,22 @@ class WhisperRecognizer:
     @property
     def language(self) -> str:
         return self._language
+
+    def warm_up(self) -> None:
+        """Run one cheap inference so the first real window is not slow."""
+
+        audio = np.zeros(SAMPLE_RATE // 2, dtype=np.float32)
+        segments, _info = self._model.transcribe(
+            audio,
+            language=self._language,
+            task="transcribe",
+            beam_size=1,
+            temperature=0.0,
+            vad_filter=False,
+            condition_on_previous_text=False,
+        )
+        for _segment in segments:
+            pass
 
     def recognize(self, mono16k: Sequence[float]) -> str:
         """Decode one window and return the complete transcript text."""

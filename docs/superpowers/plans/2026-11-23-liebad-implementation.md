@@ -78,10 +78,12 @@ write_txt(path: Path, captions: Sequence[FinalCaption]) -> None
 
 **文件**　`src/liebad/__main__.py`、`src/liebad/ui/__init__.py`、`src/liebad/ui/overlay.py`、`src/liebad/ui/session_worker.py`、`README.md`。窗口、会话接线与实测命令按各自验证结果交付。
 
-- [ ] `CaptionOverlay` 以 `Qt.WindowType.WindowStaysOnTopHint` 放在所在屏幕顶部工作区，列出实际麦克风，提供「开始」「停止」「导出」，显示最近定稿与当前临时字幕。
-- [ ] 点击开始锁定音源并开启后台会话，通过 Qt 排队信号把快照传回主线程。点击停止进入收尾，收到完成状态后启用导出。关闭窗口时发起停止，等后台释放资源后关闭。错误状态允许换设备后重新开始。
-- [ ] 运行 `& $python -m unittest discover -s tests/unit`、`& $python -m unittest discover -s tests/integration` 和 `& $python -m liebad`。将实跑通过的命令同步至 README。
-- [ ] 用真实麦克风说一段连续中文，记录从起声到首次出字的时间。切换前台窗口确认置顶。说完一句立即点击停止，核对 UTF-8 TXT 中最后一句完整且语段顺序一致。重新开始一次并核对会话只含本轮定稿。再开一轮会话并在讲话时关闭窗口，确认界面能完成关闭且麦克风可再次打开。记录结果作为首个里程碑验收证据。
+- [x] `CaptionOverlay` 以 `Qt.WindowType.WindowStaysOnTopHint` 放在所在屏幕顶部工作区，列出实际麦克风，提供「开始」「停止」「导出」，显示最近定稿与当前临时字幕。
+- [x] 点击开始锁定音源并开启后台会话，通过 Qt 排队信号把快照传回主线程。点击停止进入收尾，收到完成状态后启用导出。关闭窗口时发起停止，等后台释放资源后关闭。错误状态允许换设备后重新开始。
+- [x] 运行 `& $python -m unittest discover -s tests/unit`、`& $python -m unittest discover -s tests/integration` 和 `& $python -m liebad`。将实跑通过的命令同步至 README。
+- [x] 用真实麦克风说一段连续中文，记录从起声到首次出字的时间。切换前台窗口确认置顶。说完一句立即点击停止，核对 UTF-8 TXT 中最后一句完整且语段顺序一致。重新开始一次并核对会话只含本轮定稿。再开一轮会话并在讲话时关闭窗口，确认界面能完成关闭且麦克风可再次打开。记录结果作为首个里程碑验收证据。
+
+**记录**　实测见[测试记录](../../test-records.md)。25 个单测通过（`Ran 25 tests in 1.076s`）；真实麦克风 25 s 会话首字约 2.0 s（起声在采集域 4.52 s、首条草稿 6.5 s），定稿 1 段、导出 UTF-8 正常；置顶实测 `1920x150 at 8,0`、`stay_on_top=True`；讲话时关闭窗口 1.83 s 完成且 `thread=None`，随后重开设备 1 s 采到 12,629 个样本；两轮连续会话各自只含本轮定稿。三处偏差：临时识别原本在消费线程里同步执行，会阻塞采集（改为 `liebad-caption-inference` / `liebad-caption-final` 两条线程，临时字幕改用 `base`）；WASAPI 电平低于门限，采集侧加 `DEFAULT_GAIN=6.0`、界面门限 0.02 并新增 `min_speech_ms=300` 丢弃噪声瞬态；`base` 首次调用需 4.9 s 预热，改为启动阶段 `warm_up()` 并预加载模型后再开麦克风。识别质量仍是短板：22 字错 3 处。
 
 ## 5. 接入浏览器和抖音桌面客户端
 

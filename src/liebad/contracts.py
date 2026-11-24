@@ -75,3 +75,4 @@ class CaptionOptions:
     pause_duration_ms: int = 750
     max_segment_ms: int = 12_000
     speech_rms_threshold: float = 0.01
+    min_speech_ms: int = 300

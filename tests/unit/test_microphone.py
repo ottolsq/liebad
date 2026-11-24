@@ -88,6 +88,27 @@ class MicrophoneSourceTest(unittest.TestCase):
         self.assertEqual(list(source.blocks()), [])
         self.assertTrue(stream.exited)
 
+    def test_gain_lifts_quiet_audio_and_clamps_peaks(self) -> None:
+        stream = SilentStream()
+        source = MicrophoneSource(
+            18,
+            sample_rate=RATE,
+            channels=1,
+            blocksize=1024,
+            gain=4.0,
+            stream_factory=lambda: stream,
+        )
+        source._callback(pcm_chunk(), 1024, None, None)
+        source.request_stop()
+
+        samples = [value for block in source.blocks() for value in block.samples]
+
+        self.assertTrue(samples)
+        self.assertEqual(max(samples), 1.0)
+        self.assertGreater(
+            sum(1 for value in samples if abs(value) >= 0.999), 20
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
