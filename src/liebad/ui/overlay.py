@@ -39,7 +39,7 @@ from liebad.whisper_recognizer import WhisperRecognizer
 DEFAULT_MODEL_DIR = Path("models/faster-whisper-small")
 MODEL_ENV = "LIEBAD_WHISPER_MODEL"
 WINDOW_HEIGHT = 150
-APP_GAIN = 4.0
+APP_GAIN = 1.0
 SOURCE_KINDS = (("mic", "麦克风"), ("app", "应用（进程回环）"))
 
 
