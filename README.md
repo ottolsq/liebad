@@ -8,13 +8,19 @@ Liebad 为 Windows 上的现场讲话、抖音桌面客户端和浏览器视频�
 
 ## 快速开始
 
-可运行版本尚未实现，界面与麦克风采集在第 3 批接入。当前已验证包可以安装、单元测试可以运行（Windows、PowerShell，仓库根目录执行，解释器为 uv 装的 Python 3.12 建出的 `.venv`）：
+可运行版本尚未实现，界面在第 4 批接入。当前已验证包可以安装、单元测试与识别集成测试可以运行（Windows、PowerShell，仓库根目录执行，解释器为 uv 装的 Python 3.12 建出的 `.venv`）：
 
 ```powershell
 $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 & $python -m pip install -e .
 & $python -m unittest discover -s tests/unit
+$env:LIEBAD_TEST_MODEL = ".\models\faster-whisper-small"
+$env:LIEBAD_TEST_WAV = ".\temp\audio\recording_2.wav"
+$env:LIEBAD_TEST_KEYWORD = "最稳妥"
+& $python -m unittest discover -s tests/integration
 ```
+
+集成测试缺素材时会跳过并报出缺少的变量名；模型与素材的获取方式见[测试记录](docs/test-records.md)。
 
 构建测试和启动命令将随原型完成补全。
 

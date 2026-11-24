@@ -68,9 +68,11 @@ write_txt(path: Path, captions: Sequence[FinalCaption]) -> None
 
 **文件**　`src/liebad/whisper_recognizer.py`、`src/liebad/audio/__init__.py`、`src/liebad/audio/pcm.py`、`src/liebad/audio/microphone.py`、`tests/unit/test_pcm.py`、`tests/unit/test_microphone.py`、`tests/integration/test_whisper.py`。识别、转换和采集各自成批。
 
-- [ ] `WhisperRecognizer(model_dir: Path)` 实现 `SpeechRecognizer`，以任务 1 的 CPU 配置加载并复用模型，接受 16 kHz 单声道浮点音频并迭代完本轮生成结果。应用从 `LIEBAD_WHISPER_MODEL` 读取本地路径，校验目录和 tokenizer，输出原语言转写。集成测试从 `LIEBAD_TEST_MODEL`、`LIEBAD_TEST_WAV`、`LIEBAD_TEST_KEYWORD` 读取任务 1 的素材与预期关键词，断言非空且匹配。执行 `& $python -m unittest discover -s tests/integration`，缺少素材时报告具体缺项。
-- [ ] `Pcm16kConverter(sample_rate: int, channels: int, sample_format: str)` 提供 `convert(data: bytes) -> Sequence[float]` 和 `flush() -> Sequence[float]`。保持同一个 PyAV 重采样器，停止时取尽转换余量。测试把同一段 48 kHz 双声道 PCM 分块转换，与整块转换对照，断言一秒输出约 16,000 个样本且块边界连续。
-- [ ] `list_microphones() -> list[tuple[int, str]]` 返回 WASAPI 输入设备索引及名称。`MicrophoneSource(device_id: int)` 采集所选设备，回调提交音频至有上限的队列，由消费端转换。用假采集测试设备断开与队列溢出时的错误传递，以及正常停止后取尽队列与转换余量。执行 `& $python -m unittest discover -s tests/unit`，另用真实麦克风核对采集有效且停止后设备可再次打开。
+- [x] `WhisperRecognizer(model_dir: Path)` 实现 `SpeechRecognizer`，以任务 1 的 CPU 配置加载并复用模型，接受 16 kHz 单声道浮点音频并迭代完本轮生成结果。应用从 `LIEBAD_WHISPER_MODEL` 读取本地路径，校验目录和 tokenizer，输出原语言转写。集成测试从 `LIEBAD_TEST_MODEL`、`LIEBAD_TEST_WAV`、`LIEBAD_TEST_KEYWORD` 读取任务 1 的素材与预期关键词，断言非空且匹配。执行 `& $python -m unittest discover -s tests/integration`，缺少素材时报告具体缺项。
+- [x] `Pcm16kConverter(sample_rate: int, channels: int, sample_format: str)` 提供 `convert(data: bytes) -> Sequence[float]` 和 `flush() -> Sequence[float]`。保持同一个 PyAV 重采样器，停止时取尽转换余量。测试把同一段 48 kHz 双声道 PCM 分块转换，与整块转换对照，断言一秒输出约 16,000 个样本且块边界连续。
+- [x] `list_microphones() -> list[tuple[int, str]]` 返回 WASAPI 输入设备索引及名称。`MicrophoneSource(device_id: int)` 采集所选设备，回调提交音频至有上限的队列，由消费端转换。用假采集测试设备断开与队列溢出时的错误传递，以及正常停止后取尽队列与转换余量。执行 `& $python -m unittest discover -s tests/unit`，另用真实麦克风核对采集有效且停止后设备可再次打开。
+
+**记录**　实测见[测试记录](../../test-records.md)。单测 21 个用例全过（`Ran 21 tests in 0.481s`），集成测试在有素材时 `Ran 1 test in 4.266s` 通过、缺素材时跳过并报出三个变量名。两处偏差：`transcribe` 收到 `list` 会把它当文件路径送 `decode_audio`（`ValueError: File object has no read() method`），实现改为传 `np.float32` 数组；集成测试需先把素材归一化到峰值 0.3，否则低电平录音断言失败（同一文件乘增益后正确，解码本身一致）。真实设备用 WASAPI 的耳机麦克风采集到语音（峰值 0.05、RMS 0.008，静音时 1e-5 量级），8.5 s 语音推理 2.78 s、RTF 0.33，停止后同一设备可再次打开。`uv pip install -e .` 因 uv 的 0700 构建目录仍报 `WinError 5`，沿用第 2 批的一次性完全权限 `pip install -e .`。
 
 ## 4. 交付 PySide6 麦克风原型
 

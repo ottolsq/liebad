@@ -6,6 +6,7 @@
 |---|---|---|---|
 | 1 | 2026-11-24 | 本地工具链与 Whisper 中文转写 | 工具链通过；`small` 模型可用，需固定 `language="zh"`、做增益归一化，并后置繁转简 |
 | 2 | 2026-11-24 | 字幕会话与 TXT 导出 | 10 个单测通过；可编辑安装成功，依赖固定到 `pyproject.toml` |
+| 3 | 2026-11-24 | 接入 Whisper 和麦克风 | 21 个单测与集成测试通过；真实 WASAPI 采集到语音并转写成功，需做电平归一化 |
 
 ## 第 1 批：本地工具链与 Whisper
 
@@ -165,3 +166,63 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 - 稳定的字幕开头、停顿定稿、停止时尾段恰好定稿一次、重复文字分段保留、静音不触发识别、12 s 强制分段，都已有固定结果覆盖，第 3 批可直接复用 `CaptionSession`；停止时不足一帧的尾音现在经 `_flush_tail()` 并入最后一段，只定稿一次，有两条回归用例。
 - 依赖版本已固定到 `pyproject.toml`，`opencc` 不再只存在于 `.venv`。
 - 沙箱限制：本会话里任何 `pip` 安装都会创建 0700 临时目录而失败，需要一次性完全权限；后续安装依赖沿用这条路径。
+
+## 第 3 批：接入 Whisper 和麦克风
+
+### 环境
+
+沿用第 2 批的 `.venv`（Python 3.12.16、`faster-whisper` 1.2.1、CTranslate2 4.9.1、`av` 15.1.0、`onnxruntime` 1.32.0、`opencc-python-reimplemented` 0.1.7）。本批新增 `sounddevice==0.5.6`（带 `cffi==2.1.1`、`pycparser==3.12`），`pip check` 退出码 `0`，`pip list --format=freeze` 共 30 行。
+
+### 改动文件
+
+| 文件 | 作用 |
+|---|---|
+| `src/liebad/whisper_recognizer.py` | `WhisperRecognizer`：CPU INT8、`local_files_only=True` 复用同一模型，`from_env()` 读 `LIEBAD_WHISPER_MODEL`/`LIEBAD_WHISPER_LANGUAGE`，校验 `model.bin` 与 `tokenizer.json`，输出后 `opencc` 转简体 |
+| `src/liebad/audio/pcm.py` | `Pcm16kConverter`：有状态 PyAV `AudioResampler`，`convert(bytes)` 与 `flush()` 保留滤波尾音 |
+| `src/liebad/audio/microphone.py` | `list_microphones()` 只列 WASAPI 输入；`MicrophoneSource` 用 `RawInputStream` 回调入有界队列，消费端转换并兜住状态错误与队列溢出 |
+| `src/liebad/audio/__init__.py` | 导出 `MicrophoneSource`、`Pcm16kConverter`、`list_microphones` |
+| `tests/unit/test_pcm.py` | 5 个用例：整块与分块逐样本一致、时长换算、单声道、非法参数、收尾 |
+| `tests/unit/test_microphone.py` | 4 个用例：假采集的正常排空、状态错误、队列溢出、启动前停止 |
+| `tests/unit/test_whisper_recognizer.py` | 2 个用例：缺环境变量、模型目录缺文件 |
+| `tests/integration/test_whisper.py` | 1 个用例：读三个环境变量，缺项报出具体名字并跳过 |
+| `pyproject.toml` | 依赖新增 `sounddevice==0.5.6` |
+
+### 实施过程
+
+1. 先实测 PyAV 15.1.0 的重采样行为：48 kHz 双声道 `s16` 的 4800 样本一次 `resample` 得 1584 个 16 kHz 单声道样本，`resample(None)` 再补 16 个；按 3840/1920/960/480/240/7 字节分块与整块转换逐样本一致（`maxdiff 0.000000`）。
+2. 识别器首版把 `list(mono16k)` 直接交给 `transcribe`，`faster_whisper/transcribe.py:876` 判定它不是 `np.ndarray` 后当成文件路径送 `decode_audio`，抛 `ValueError: File object has no read() method, or readable() returned False.`；改为 `np.asarray(mono16k, dtype=np.float32)`。
+3. 集成测试首跑在原始电平上断言 `最稳妥` 失败（实际 `最文破判`）。同一 WAV 与 m4a 重新解码逐样本一致（`max diff 0.000000`），同配置连跑三次结果也完全相同，乘 15 倍增益后才对；差异只在电平，于是测试先归一化到峰值 0.3 再断言。
+4. 真实设备：WASAPI 只有两个输入，`17 麦克风阵列`（英特尔智音）与 `18 耳机式麦克风 (H180 Plus (Type C))`。静音房间里 WASAPI 电平在 1e-5 量级，说话时峰值 0.05、RMS 0.008；WDM-KS 的 `26 Input (H180 Plus (Type C))` 反而一直有 50–56 Hz 底噪，RMS 0.015–0.039。默认采集端点的音量读数为 `mute False level 1.000`，排除静音或音量归零。
+5. 安装：`uv pip install -e .` 在写 `temp\uv-cache\builds-v0\...\liebad.egg-info` 时抛 `PermissionError: [WinError 5]`（uv 的构建临时目录同样是 0700），改用与第 2 批相同的一次性完全权限 `pip install -e .`。
+
+### 结果
+
+| 命令 | 期望 | 实测 |
+|---|---|---|
+| `& $python -m unittest discover -s tests/unit` | 21 个用例全过 | `Ran 21 tests in 0.481s`、`OK`，退出码 `0` |
+| `& $python -m unittest discover -s tests/integration`（三个变量齐全） | 关键词命中 | `最稳妥` 在去空格文本中，`Ran 1 test in 4.266s`、`OK`，退出码 `0` |
+| `& $python -m unittest discover -s tests/integration`（不设变量） | 报出缺项并跳过 | `skipped 'missing LIEBAD_TEST_MODEL, LIEBAD_TEST_WAV, LIEBAD_TEST_KEYWORD'`，`OK (skipped=1)`，退出码 `0` |
+| `& $python -m pip check` | 退出码 `0` | `No broken requirements found.` |
+| 真实麦克风采集后转写 | 非空文本 | 45.01 s 采集里 4.60–13.10 s 有声（峰值 0.0523），归一化后 `今天我们来验证本地语音专写看看段曲和准确率`，推理 2.78 s、RTF 0.327 |
+| 停止后再次打开同一设备 | 两次都成功 | 各 16,043 个样本，峰值 0.0017 / 0.0003，耗时 1.36 s / 1.30 s |
+
+### 命令
+
+```powershell
+$python = (Resolve-Path .\.venv\Scripts\python.exe).Path
+& $python -m unittest discover -s tests/unit
+$env:LIEBAD_TEST_MODEL = ".\models\faster-whisper-small"
+$env:LIEBAD_TEST_WAV = ".\temp\audio\recording_2.wav"
+$env:LIEBAD_TEST_KEYWORD = "最稳妥"
+& $python -m unittest discover -s tests/integration
+```
+
+真实麦克风自检按「枚举设备 → 采集一段 → 归一化 → 转写 → 再开一次」的顺序在 `temp\mic_speech.py`、`temp\mic_reopen.py` 里做过，属于一次性探测脚本，不入库。
+
+### 结论与待办
+
+- 采集、转换、识别三段在本机真实设备上接通：WASAPI 采集到语音，PyAV 转成 16 kHz 单声道，`WhisperRecognizer` 出简体文本，端到端 8.5 s 语音推理 2.78 s（RTF 0.33），24 字错 2 处（`转写` → `专写`、`断句` → `段曲`）。
+- WASAPI 语音的 RMS 只有 0.005–0.008，低于会话默认的 `speech_rms_threshold=0.01`；第 4 批接界面时必须实测临时字幕能否出得来，必要时在采集侧加增益或下调门限。
+- WDM-KS 通道有 50–56 Hz 底噪且 RMS 常高于门限，会误触发语音判定，不作为默认通道。
+- 依赖安装仍需一次性完全权限：`pip` 与 `uv` 的构建临时目录都用 0700 目录。
+- 本批没有改 `CaptionSession`，第 4 批直接复用；集成测试要求素材先归一化到峰值 0.3。
