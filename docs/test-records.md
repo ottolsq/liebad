@@ -17,7 +17,7 @@
 | Python | 3.12.16，64 位，uv 独立构建，位于 `.python\cpython-3.12.16-windows-x86_64-none\python.exe` |
 | 虚拟环境 | `.venv`，pip 26.3 |
 
-依赖（`pip check` 退出码 `0`，输出 `No broken requirements found.`）：`faster-whisper==1.2.1`、`ctranslate2==4.9.1`、`onnxruntime==1.32.0`、`av==15.1.0`、`tokenizers==0.23.3`、`numpy==2.5.5`、`huggingface-hub==2.4.0`，共 26 个包。
+依赖（`pip check` 退出码 `0`，输出 `No broken requirements found.`）：`faster-whisper==1.2.1`、`ctranslate2==4.9.1`、`onnxruntime==1.32.0`、`av==15.1.0`、`tokenizers==0.23.3`、`numpy==2.5.5`、`huggingface-hub==2.4.0`、`opencc-python-reimplemented==0.1.7`，共 26 个包。
 
 `av` 必须锁 `15.1.0`：`19.0.2` 移除了 `metadata_errors` 参数，`faster_whisper.audio.decode_audio` 会抛 `TypeError`。
 
@@ -53,8 +53,9 @@
 | `small`，`language="zh"` | 而对面楼是成交一直作用最大的先购 | 2.35–2.42 s（首跑 6.57 s） | 0.39–0.40 |
 | `small`，`language="zh"` + 增益 ×15 | 而對面樓市成交一直作用最大的先購 | 2.155 s | 0.359 |
 | `small`，`language="zh"` + 增益 ×15 + 简体提示词 | 而对面楼是成交一直作用最大的先购。 | 2.311 s | 0.385 |
+| `small`，`language="zh"` + 增益 ×15 + `--simplify` | 而对面楼市成交一直作用最大的先购 | 1.918 s | 0.320 |
 
-参考关键词 `成交` 在各配置均命中。`base` 错 3 处（楼市 → 面螺式、抑制 → 一直、限购 → 线构）；`small` 修正了 `楼市`，仍错 `抑制 → 一直`、`限购 → 先购`。
+参考关键词 `成交` 在各配置均命中。`base` 错 3 处（楼市 → 面螺式、抑制 → 一直、限购 → 线构）；`small` 修正了 `楼市`，仍错 `抑制 → 一直`、`限购 → 先购`。最后一行先出繁体再经 `opencc t2s` 转简体，`楼市` 仍正确，说明后置转换不损伤已正确的字。
 
 ### 素材 B：真人录音
 
@@ -89,27 +90,27 @@
 
 繁体字统计只覆盖 `對樓購內來寫這說…` 等一组常用繁体专用字，用于判断字形倾向，不等同于完整的繁简检测。
 
-结论：简体输出不能靠提示词保证，且提示词会以准确率换字形。建议解码固定 `language="zh"`、不加提示词，输出后做繁转简（如 `opencc`）。
+结论：简体输出不能靠提示词保证，且提示词会以准确率换字形。已选定方案：解码固定 `language="zh"`、不加提示词，输出后用 `opencc`（`t2s`）转简体。探测脚本的 `--simplify` 已实现并验证：公开样本由 `而對面樓市成交一直作用最大的先購` 转为 `而对面楼市成交一直作用最大的先购`，`楼市` 保持正确，推理耗时 1.918 s（未转换时 2.155 s，差异在噪声范围内）。
 
 ### 命令
 
 ```powershell
 $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 & $python -m pip check
-& $python .\tools\probe_whisper.py --model-dir .\models\faster-whisper-small --wav .\temp\audio\recording_2.wav --language zh --gain 15 --keyword 最稳妥
-& $python .\tools\probe_whisper.py --model-dir .\models\faster-whisper-small --wav .\temp\audio\aishell_sample.wav --language zh --gain 15 --keyword 成交
+& $python .\tools\probe_whisper.py --model-dir .\models\faster-whisper-small --wav .\temp\audio\recording_2.wav --language zh --gain 15 --simplify --keyword 最稳妥
+& $python .\tools\probe_whisper.py --model-dir .\models\faster-whisper-small --wav .\temp\audio\aishell_sample.wav --language zh --gain 15 --simplify --keyword 楼市
 ```
 
 两条探测命令退出码均为 `0`。
 
 ### 参数
 
-`WhisperModel(model_dir, device="cpu", compute_type="int8", local_files_only=True)`；`beam_size=5`、`vad_filter=False`、`condition_on_previous_text=False`、`cpu_threads` 取库默认值。增益由探测脚本的 `--gain` 在转写前乘到采样点上并裁剪到 `[-1, 1]`；`--prompt` 透传为 `initial_prompt`。
+`WhisperModel(model_dir, device="cpu", compute_type="int8", local_files_only=True)`；`beam_size=5`、`vad_filter=False`、`condition_on_previous_text=False`、`cpu_threads` 取库默认值。增益由探测脚本的 `--gain` 在转写前乘到采样点上并裁剪到 `[-1, 1]`；`--prompt` 透传为 `initial_prompt`；`--simplify` 用 `opencc.OpenCC("t2s")` 转换每段文本后再拼接，关键词匹配也在转换后的文本上做。
 
 ### 结论与待办
 
 - 速度：`small` 在 13.5 s 录音上推理稳定在约 2.5 s（RTF 0.18–0.19），机器有其他负载时实测到 4.3 s（RTF 0.32）；`base` 为 0.84–1.67 s（RTF 0.06–0.12）。首跑含线程预热会慢一倍左右。
 - 准确率：`base` 两份素材都只对约六成内容；`small` 在真人录音上 24 字错 1 处（`一千字` → `1000次`），可用。原型基线定为 `small`。
 - 增益归一化影响明显：同一段低电平录音，增益 ×15 把 `最文破坏` 修正为 `最稳妥`，`base` 也仅在此配置下救回 `調用`。采集链路需要软件增益或 AGC。
-- 简体输出未定：同一模型同一参数下，真人录音出简体、公开样本不加提示词时出繁体；三种提示词都能拉成简体，但两份素材的准确率都变差。建议解码不加提示词，输出后做繁转简（如 `opencc`）。
+- 简体输出已定：解码固定 `language="zh"`、不加提示词，输出后用 `opencc`（`t2s`，`opencc-python-reimplemented==0.1.7`）转简体；脚本 `--simplify` 已实现，公开样本的 `對面樓市` 转成 `对面楼市` 后仍正确。`opencc` 目前只装在 `.venv` 里，待第 2 批建 `pyproject.toml` 时正式固定版本。
 - `av` 必须锁 `15.1.0`，升级前需重跑本记录。

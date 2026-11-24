@@ -15,6 +15,7 @@ import sys
 import time
 import wave
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -33,7 +34,18 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--gain", default=1.0, type=float, help="Multiply samples by this factor (clipped to [-1, 1]). Default: 1.0.")
     parser.add_argument("--prompt", default=None, help="Initial prompt passed to the decoder, e.g. a simplified-Chinese hint.")
     parser.add_argument("--keyword", default=None, help="Optional reference keyword to look for in the transcript.")
+    parser.add_argument("--simplify", action="store_true", help="Convert the transcript from Traditional to Simplified Chinese (opencc t2s).")
     return parser.parse_args(argv)
+
+
+def _make_simplifier() -> "Callable[[str], str]":
+    """Return a Traditional-to-Simplified converter; importing lazily keeps the flag optional."""
+    try:
+        from opencc import OpenCC
+    except ImportError as exc:
+        raise SystemExit("error: --simplify needs opencc-python-reimplemented installed") from exc
+    converter = OpenCC("t2s")
+    return converter.convert
 
 
 def load_wav(path: Path) -> tuple[np.ndarray, float, str]:
@@ -109,6 +121,10 @@ def main(argv: list[str] | None = None) -> int:
         rows.append((segment.start, segment.end, segment.text.strip()))
     inference_seconds = time.perf_counter() - transcribe_started
 
+    simplify: Callable[[str], str] | None = _make_simplifier() if args.simplify else None
+    if simplify is not None:
+        rows = [(start, end, simplify(text)) for start, end, text in rows]
+
     print(f"device:    cpu  compute_type: int8  cpu_threads: auto")
     print(f"language:  {info.language}  probability: {info.language_probability:.3f}")
     print(f"load_s:    {load_seconds:.3f}")
@@ -117,6 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     if duration > 0:
         print(f"rtf:       {inference_seconds / duration:.3f}  (infer_s / audio_s)")
     print(f"segments:  {len(rows)}")
+    print(f"simplify:  {'opencc t2s' if simplify is not None else 'off'}")
     for start, end, text in rows:
         print(f"  {start:7.3f}-{end:7.3f}  {text}")
 

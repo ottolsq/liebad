@@ -33,7 +33,7 @@
 - [x] 实现探测脚本，用 `--model-dir` 和 `--wav` 接收本地素材。以 CPU INT8 和 `local_files_only=True` 加载模型，迭代完识别结果后记录实际推理时间。模型目录应包含 tokenizer 文件。运行 `& $python .\tools\probe_whisper.py --model-dir $modelDir --wav $wavPath`，预期退出码为 `0`，转写含人工选定的参考关键词。
 - [x] 记录 Windows 构建号、Python、依赖和模型版本、录音时长、参考文字、识别输出、推理耗时与参数。任务 3 复用同一模型和录音。
 
-**记录**　实测数据见[测试记录](../../test-records.md)，脚本见 [probe_whisper.py](../../../tools/probe_whisper.py)。执行时的两处偏差：系统 Python 3.15 没有 `onnxruntime` 的 cp315 wheel，经用户确认改用 uv 安装的 3.12.16 建虚拟环境；`av` 锁 `15.1.0`，因为 19.x 删除了 `metadata_errors` 参数。首个候选 `base` 模型在公开样本（6.00 s）和真人录音（13.525 s）上只对约六成内容，经用户确认下载 `faster-whisper-small`（486 MB）复核后定为基线：真人录音推理约 2.5 s（RTF 0.18–0.19，有负载时到 4.3 s），固定 `language="zh"` + 增益 ×15 后 24 字错 1 处（`一千字` → `1000次`）。字形随音频在简体与繁体之间变化，加提示词能拉成简体但准确率下降，倾向接入后置繁转简。
+**记录**　实测数据见[测试记录](../../test-records.md)，脚本见 [probe_whisper.py](../../../tools/probe_whisper.py)。执行时的两处偏差：系统 Python 3.15 没有 `onnxruntime` 的 cp315 wheel，经用户确认改用 uv 安装的 3.12.16 建虚拟环境；`av` 锁 `15.1.0`，因为 19.x 删除了 `metadata_errors` 参数。首个候选 `base` 模型在公开样本（6.00 s）和真人录音（13.525 s）上只对约六成内容，经用户确认下载 `faster-whisper-small`（486 MB）复核后定为基线：真人录音推理约 2.5 s（RTF 0.18–0.19，有负载时到 4.3 s），固定 `language="zh"` + 增益 ×15 后 24 字错 1 处（`一千字` → `1000次`）。字形随音频在简体与繁体之间变化，加提示词能拉成简体但准确率下降，已改为解码不加提示词、接入后置 `opencc` 繁转简（`opencc-python-reimplemented==0.1.7`，探测脚本 `--simplify` 已验证）。
 
 ## 2. 实现字幕会话和 TXT 导出
 

@@ -44,7 +44,7 @@ Python 与依赖版本、Whisper 模型规格和音频窗口参数以原型实�
 
 ### 已验证基线
 
-2026-11-24 实测（Windows 11 构建 `26200`、x64、CPU INT8）：Python 3.12.16，`faster-whisper` 1.2.1，CTranslate2 4.9.1，`onnxruntime` 1.32.0，`av` 15.1.0（19.x 与 1.2.1 不兼容，`decode_audio` 会抛 `TypeError`）。原型基线模型为 `Systran/faster-whisper-small`（本地目录 486 MB，离线加载），固定 `language="zh"`、`beam_size=5`、`vad_filter=False`；13.525 s 真人录音推理约 2.5 s（RTF 0.18–0.19，机器有负载时实测到 4.3 s），6.00 s 公开样本 RTF 约 0.36，首跑含线程预热更慢。`base` 模型中文只对约六成内容，已弃用。采集侧需要软件增益或 AGC：同一段低电平录音（峰值 0.020）乘 15 后，`最文破坏` 才修正为 `最稳妥`。简体输出方案待定：字形随音频变化（真人录音出简体，公开样本不加提示词时出繁体），加提示词能稳定输出简体但会拉低准确率，倾向固定 `language="zh"` 解码后再做繁转简。数据见[测试记录](test-records.md)。
+2026-11-24 实测（Windows 11 构建 `26200`、x64、CPU INT8）：Python 3.12.16，`faster-whisper` 1.2.1，CTranslate2 4.9.1，`onnxruntime` 1.32.0，`av` 15.1.0（19.x 与 1.2.1 不兼容，`decode_audio` 会抛 `TypeError`）。原型基线模型为 `Systran/faster-whisper-small`（本地目录 486 MB，离线加载），固定 `language="zh"`、`beam_size=5`、`vad_filter=False`；13.525 s 真人录音推理约 2.5 s（RTF 0.18–0.19，机器有负载时实测到 4.3 s），6.00 s 公开样本 RTF 约 0.36，首跑含线程预热更慢。`base` 模型中文只对约六成内容，已弃用。采集侧需要软件增益或 AGC：同一段低电平录音（峰值 0.020）乘 15 后，`最文破坏` 才修正为 `最稳妥`。简体输出已定：解码固定 `language="zh"`，输出后用 `opencc`（`t2s`）转简体，不采用提示词偏置。字形本身随音频在简体与繁体之间变化，加提示词能拉成简体但会拉低准确率，已实测否决。数据见[测试记录](test-records.md)。
 
 ## 模型对比
 
