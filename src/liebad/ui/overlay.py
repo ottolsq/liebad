@@ -19,7 +19,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from liebad.audio import MicrophoneSource, list_microphones
+from liebad.audio import (
+    MicrophoneSource,
+    ProcessLoopbackSource,
+    list_app_sources,
+    list_microphones,
+)
 from liebad.contracts import (
     SAMPLE_RATE,
     CaptionOptions,
@@ -34,6 +39,8 @@ from liebad.whisper_recognizer import WhisperRecognizer
 DEFAULT_MODEL_DIR = Path("models/faster-whisper-small")
 MODEL_ENV = "LIEBAD_WHISPER_MODEL"
 WINDOW_HEIGHT = 150
+APP_GAIN = 4.0
+SOURCE_KINDS = (("mic", "麦克风"), ("app", "应用（进程回环）"))
 
 
 class CaptionOverlay(QWidget):
@@ -63,8 +70,13 @@ class CaptionOverlay(QWidget):
         )
         self.setMinimumHeight(WINDOW_HEIGHT)
 
+        self._kind = QComboBox()
+        for value, text in SOURCE_KINDS:
+            self._kind.addItem(text, value)
+        self._kind.setMinimumWidth(150)
         self._device = QComboBox()
-        self._device.setMinimumWidth(260)
+        self._device.setMinimumWidth(300)
+        self._refresh = QPushButton("刷新")
         self._start = QPushButton("开始")
         self._stop = QPushButton("停止")
         self._export = QPushButton("导出")
@@ -72,8 +84,10 @@ class CaptionOverlay(QWidget):
         self._export.setEnabled(False)
 
         row = QHBoxLayout()
-        row.addWidget(QLabel("麦克风"))
+        row.addWidget(QLabel("音源"))
+        row.addWidget(self._kind)
         row.addWidget(self._device, 1)
+        row.addWidget(self._refresh)
         row.addWidget(self._start)
         row.addWidget(self._stop)
         row.addWidget(self._export)
@@ -99,7 +113,9 @@ class CaptionOverlay(QWidget):
         self._start.clicked.connect(self.start_capture)
         self._stop.clicked.connect(self.stop_capture)
         self._export.clicked.connect(self._choose_export)
-        self._refresh_devices()
+        self._refresh.clicked.connect(self._refresh_sources)
+        self._kind.currentIndexChanged.connect(self._refresh_sources)
+        self._refresh_sources()
         self._move_to_top()
         if preload:
             self._load_models()
@@ -133,13 +149,30 @@ class CaptionOverlay(QWidget):
 
     # ---------------------------------------------------------------- devices
 
-    def _refresh_devices(self) -> None:
+    def _kind_value(self) -> str:
+        return str(self._kind.currentData() or "mic")
+
+    def _refresh_sources(self) -> None:
+        kind = self._kind_value()
+        self._device.clear()
+        if kind == "app":
+            try:
+                sources = list_app_sources()
+            except Exception as exc:
+                self._status.setText(f"无法枚举应用：{exc}")
+                return
+            for source in sources:
+                self._device.addItem(source.label, source.pid)
+            if not sources:
+                self._status.setText("没有找到正在播放的应用窗口")
+            else:
+                self._status.setText(f"就绪，{len(sources)} 个应用窗口")
+            return
         try:
             devices = list_microphones()
         except Exception as exc:
             self._status.setText(f"无法枚举麦克风：{exc}")
             return
-        self._device.clear()
         for index, name in devices:
             self._device.addItem(f"{index} · {name}", index)
         if not devices:
@@ -159,9 +192,12 @@ class CaptionOverlay(QWidget):
     def start_capture(self) -> None:
         if self._thread is not None:
             return
-        device = self._device.currentData()
-        if device is None:
-            self._status.setText("请先选择一个输入设备")
+        source_id = self._device.currentData()
+        kind = self._kind_value()
+        if source_id is None:
+            self._status.setText(
+                "请先选择一个应用窗口" if kind == "app" else "请先选择一个输入设备"
+            )
             return
         if self._recognizer is None:
             self._status.setText("模型还在加载，请稍候再点开始")
@@ -174,8 +210,18 @@ class CaptionOverlay(QWidget):
         self._draft.setText("")
         self._final.setText("")
 
-        def open_source():
-            return MicrophoneSource(int(device))
+        if kind == "app":
+            pid = int(source_id)
+            label = self._device.currentText()
+
+            def open_source():
+                return ProcessLoopbackSource(pid, gain=APP_GAIN)
+        else:
+            device = int(source_id)
+            label = self._device.currentText()
+
+            def open_source():
+                return MicrophoneSource(device)
 
         worker = SessionWorker(
             open_source,
@@ -198,7 +244,7 @@ class CaptionOverlay(QWidget):
         self._thread = thread
         self._started_at = time.perf_counter()
         self._set_running(True)
-        self._status.setText("采集中…说话即可看到临时字幕")
+        self._status.setText(f"采集中（{label}）…")
         thread.start()
 
     def stop_capture(self) -> None:
@@ -208,6 +254,8 @@ class CaptionOverlay(QWidget):
             self._stop.setEnabled(False)
 
     def _set_running(self, running: bool) -> None:
+        self._kind.setEnabled(not running)
+        self._refresh.setEnabled(not running)
         self._device.setEnabled(not running)
         self._start.setEnabled(not running)
         self._stop.setEnabled(running)
@@ -223,18 +271,30 @@ class CaptionOverlay(QWidget):
                 "定稿：" + " / ".join(caption.text for caption in snapshot.final[-3:])
             )
         if snapshot.state is CaptionState.FAULTED and snapshot.error:
-            self._status.setText(f"错误：{snapshot.error}")
+            self._handle_fault(snapshot.error)
         elif snapshot.state is CaptionState.FINISHING:
             self._status.setText("收尾中…")
         elif snapshot.state is CaptionState.CAPTURING:
             self._status.setText("采集中…说话即可看到临时字幕")
+
+    def _handle_fault(self, message: str) -> None:
+        if "exited" in message:
+            detail = "目标应用已退出，请重新选择音源后再开始"
+        else:
+            detail = message
+        self._set_running(False)
+        if self._kind_value() == "app":
+            self._refresh_sources()
+        self._status.setText(f"错误：{detail}")
 
     def _on_finished(self, snapshot: CaptionSnapshot) -> None:
         self._on_snapshot(snapshot)
         self._captions = snapshot.final
         self._teardown_thread()
         self._set_running(False)
-        if self._first_text_at is not None and self._started_at is not None:
+        if snapshot.state is CaptionState.FAULTED and snapshot.error:
+            self._handle_fault(snapshot.error)
+        elif self._first_text_at is not None and self._started_at is not None:
             delay = self._first_text_at - self._started_at
             self._status.setText(f"已完成，{len(self._captions)} 段，首字 {delay:.1f} s，可导出")
         elif self._captions:
@@ -244,8 +304,7 @@ class CaptionOverlay(QWidget):
 
     def _on_failed(self, message: str) -> None:
         self._teardown_thread()
-        self._set_running(False)
-        self._status.setText(f"错误：{message}")
+        self._handle_fault(message)
 
     def _teardown_thread(self, grace_ms: int = 20_000) -> None:
         thread = self._thread

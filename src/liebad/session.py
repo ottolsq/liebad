@@ -108,6 +108,7 @@ class CaptionSession:
 
         self._state = CaptionState.CAPTURING
         self._draft = ""
+        self._error: str | None = None
         self._finals: list[FinalCaption] = []
         self._snapshot = CaptionSnapshot(CaptionState.CAPTURING, "", ())
 
@@ -352,10 +353,19 @@ class CaptionSession:
         self, state: CaptionState, draft: str, error: str | None = None
     ) -> None:
         with self._lock:
+            # Trailing publishes from the finishing threads must not wipe the
+            # failure that ended the session.
+            if state is CaptionState.FAULTED:
+                self._error = error or self._error
+            else:
+                self._error = None
             self._state = state
             self._draft = draft
             snapshot = CaptionSnapshot(
-                state=state, draft=draft, final=tuple(self._finals), error=error
+                state=state,
+                draft=draft,
+                final=tuple(self._finals),
+                error=self._error if state is CaptionState.FAULTED else None,
             )
             self._snapshot = snapshot
         self._publish_callback(snapshot)

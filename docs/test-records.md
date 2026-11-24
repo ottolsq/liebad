@@ -8,6 +8,7 @@
 | 2 | 2026-11-24 | 字幕会话与 TXT 导出 | 10 个单测通过；可编辑安装成功，依赖固定到 `pyproject.toml` |
 | 3 | 2026-11-24 | 接入 Whisper 和麦克风 | 21 个单测与集成测试通过；真实 WASAPI 采集到语音并转写成功，需做电平归一化 |
 | 4 | 2026-11-24 | 置顶悬浮窗原型 | 25 个单测通过；真实麦克风端到端跑通，首字约 2.0 s，置顶、停止导出、关闭后重开麦克风均实测通过 |
+| 5 | 2026-11-24 | 应用音频回环 | 36 个单测通过；两个应用同时发声时各自只识别选中进程，暂停后自然定稿，关闭目标应用提示重新选择音源；浏览器与抖音的人工验收待补 |
 
 ## 第 1 批：本地工具链与 Whisper
 
@@ -288,3 +289,67 @@ $env:LIEBAD_WHISPER_PARTIAL_MODEL = ".\models\faster-whisper-base"  # 可省略�
 - 识别质量仍是短板：本轮 22 字错 3 处（`本地` → `本币`、`转写` → `专写`、`看看断句` → `算算段距`），临时字幕用 `base` 时错字更多，还会因为冻结前缀只增不减而累积重复。
 - 关闭窗口时 sounddevice 会打印 `can't open file for write !`（流关闭与回调的竞态），不影响退出和再次打开，待定位。
 - 安装仍需一次性完全权限 `pip install -e .`；`uv pip install -e .` 仍因 0700 构建目录报 `PermissionError: [WinError 5]`。
+
+## 第 5 批：应用音频回环
+
+### 环境
+
+| 项 | 实测值 |
+|---|---|
+| Windows | 11 25H2，构建号 `26200.9974`，x64 |
+| 新增依赖 | `comtypes==1.5.0`（`pip check` 退出码 `0`），设备 `VAD\Process_Loopback` |
+| 采集方式 | `ActivateAudioInterfaceAsync` + `PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE`，优先直接 16 kHz 单声道 PCM16 |
+| 自动化替代目标 | 两个 `powershell.exe` 播放器窗口 `LIEBAD-AISHELL`、`LIEBAD-RECORDING`（各播不同 WAV） |
+| 未能覆盖 | 抖音桌面客户端未安装；Chrome/Edge 无法由会话内进程拉起，浏览器与抖音的人工验收待补 |
+
+### 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `src/liebad/audio/process_catalog.py` | 新建。`AppSource(pid, process_name, window_title)`、`list_app_sources(*, exclude_pid)`，用 `EnumWindows` 取可见窗口、`QueryFullProcessImageNameW` 取进程名，按 pid 去重保留最长标题 |
+| `src/liebad/audio/process_loopback.py` | 新建。`WasapiProcessLoopbackClient`、`ProcessLoopbackSource`、`_ProcessProbe`，comtypes 声明 `IAudioClient`、`IAudioCaptureClient`、激活 handler 与 `IAgileObject` |
+| `src/liebad/audio/__init__.py` | 导出 `AppSource`、`ProcessLoopbackError`、`ProcessLoopbackSource`、`list_app_sources` |
+| `src/liebad/ui/overlay.py` | 新增「麦克风 / 应用（进程回环）」音源下拉与刷新按钮，应用模式按 pid 采集，`APP_GAIN = 4.0`；目标退出时提示重新选择 |
+| `src/liebad/session.py` | `_publish` 保留 `FAULTED` 的错误文本，避免收尾线程的发布把错误抹成空 |
+| `tests/unit/test_process_loopback.py` | 新建 10 个用例：包转发与偏移、增益限幅、补静音、进程退出（无包/仍有包两种）、client 失败传播、停止、catalog 标签与去重 |
+| `tests/unit/test_session.py` | 新增「故障错误在收尾线程发布后仍保留」的回归用例 |
+| `pyproject.toml` | 依赖新增 `comtypes==1.5.0` |
+
+### 实施过程
+
+1. 按微软 ApplicationLoopback 示例用 comtypes 自行声明接口，`PROPVARIANT` 以 `VT_BLOB` 传 `AUDIOCLIENT_ACTIVATION_PARAMS`，handler 同时实现 `IAgileObject` 否则激活返回 `E_ILLEGAL_METHOD_CALL`。
+2. 冒烟首次失败：`CoInitializeEx(COINIT_MULTITHREADED)` 报 `OSError: [WinError -2147417850]`。原因是 `liebad.audio` 先导入 `sounddevice`，PortAudio 已把主线程设为 STA；改为容忍 `RPC_E_CHANGED_MODE` 继续，并用 `PeekMessage` 泵消息等待 `ActivateCompleted`。
+3. 隔离验收：两个播放器同时播不同 WAV，界面「应用」模式各选一次，导出两份 TXT。
+4. 暂停定稿：单次播放结束后不再喂音频，1.2 s 内自然定稿，无需点「停止」。
+5. 关闭目标应用：初版只在「长时间没有音频包」时才查进程，关闭后静音包仍持续到达，导致界面一直显示采集中；改为每 0.5 s 主动查进程句柄并抛 `ProcessLoopbackError`。
+6. 修完探测后发现界面仍显示「已完成，0 段」：`FAULTED` 快照的 `error` 被收尾线程后续的 `_publish` 覆盖成 `None`，`_publish` 改为在 `FAULTED` 状态保留错误文本。
+
+### 结果
+
+| 命令 / 场景 | 期望 | 实测 |
+|---|---|---|
+| `& $python -m unittest discover -s tests/unit` | 全过 | `Ran 36 tests in 1.116s`、`OK`，退出码 `0` |
+| `& $python -m pip check` | 退出码 `0` | `No broken requirements found.` |
+| 激活冒烟（`temp\loopback_smoke.py`） | 能打开并收包 | `open took 0.000s`，3 s 收 298 包、47,680 帧 |
+| 两个应用同时发声，各选一次 | 只识别选中应用 | A：首字 2.3 s，`最大的先购而对面楼市成交一直作用最大的先购`；B：首字 4.0 s，`如果你是通过API调用最稳妥,按中文500字,英文1000次。`；两份导出互不包含 |
+| 播放结束后暂停 | 语段自然定稿 | 未点停止时（11 s）已定稿 1 段 `而对面楼市成交一直作用最大的先购`，14 s 停止后 `已完成，1 段，首字 4.7 s` |
+| 关闭目标应用 | 报错并允许重选 | 终止目标后列表从 19 项变 18 项，状态 `错误：目标应用已退出，请重新选择音源后再开始`，「开始」恢复可用，`finished=faulted` |
+
+### 命令
+
+```powershell
+$python = (Resolve-Path .\.venv\Scripts\python.exe).Path
+& $python -m unittest discover -s tests/unit
+& $python -m pip check
+$env:LIEBAD_WHISPER_MODEL = ".\models\faster-whisper-small"
+& $python -m liebad
+```
+
+人工验收：在浏览器和抖音桌面客户端同时播放两段不同语音，界面选「应用（进程回环）」，分别选中两个进程各跑一次，核对字幕与导出只含选中应用的内容。
+
+### 结论与待办
+
+- 进程回环在本机可用，`INCLUDE_TARGET_PROCESS_TREE` 下两个应用同时发声也能各自隔离，字幕与导出都只含所选进程。
+- 关闭应用必须主动探测进程：WASAPI 在目标退出后仍可能送静音包，「无包」不能当退出信号。
+- 待办：抖音桌面客户端未安装；会话内无法拉起 Chrome/Edge（沙箱会终止子进程），浏览器与抖音的人工验收需在桌面上完成。应用增益 `APP_GAIN=4.0` 只对本次素材（峰值 0.5）验证过，系统音量变化时可能仍需调整。
+- 测试脚本层面的限制：本会话内 `taskkill` 无法终止沙箱内的子进程（`WaitForSingleObject` 仍超时），自动化改用 `Popen.terminate()`，不影响产品逻辑。

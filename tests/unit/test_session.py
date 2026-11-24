@@ -295,6 +295,24 @@ class CaptionSessionTest(unittest.TestCase):
         self.assertIn("device gone", snapshot.error or "")
         self.assertEqual(snapshot.draft, "")
 
+    def test_fault_error_survives_the_finishing_threads(self):
+        class SpeechThenBroken:
+            def blocks(self):
+                yield AudioBlock(samples=tuple(speech(1.0)), start_sample=0)
+                raise RuntimeError("process exited")
+
+            def request_stop(self) -> None:
+                pass
+
+        recognizer = ScriptedRecognizer(["第一段"])
+        session, _ = self.make_session(SpeechThenBroken(), recognizer)
+
+        snapshot = session.run()
+
+        self.assertEqual(snapshot.state, CaptionState.FAULTED)
+        self.assertIn("process exited", snapshot.error or "")
+        self.assertEqual(snapshot.final, ())
+
 
 if __name__ == "__main__":
     unittest.main()
