@@ -1,0 +1,7 @@
+# Local toolchain and runtime artifacts
+.python/
+.venv/
+models/
+temp/
+__pycache__/
+*.py[cod]
