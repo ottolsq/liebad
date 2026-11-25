@@ -99,7 +99,9 @@ write_txt(path: Path, captions: Sequence[FinalCaption]) -> None
 
 **文件**　`tools/asr_bench.py`、`src/liebad/replay_audio.py`、`src/liebad/wav2vec_recognizer.py`、`tests/unit/test_asr_bench.py`。先批复中文微调权重及 Python 依赖，再分别实现回放、模型适配和计分。
 
-- [ ] `ReplayAudioSource(wav_path: Path)` 以原速交付带样本位置的 PCM。`Wav2VecRecognizer(model_dir: Path)` 通过 Transformers 加载本地中文微调的 CTC 模型与处理器，实现 `SpeechRecognizer`，在同一个 Python 会话流程中与 Whisper 对照。两个模型分别加载一次并预热。
-- [ ] 基准程序以 `--manifest` 读取含 `audio`、`reference`、`language`、`speechStartSeconds` 的 UTF-8 CSV，以 `--whisper-model`、`--wav2vec-model` 接收本地模型路径，以 `--out` 写结果。每条样本分别运行两次独立会话，每个引擎一次，两次沿用相同分段设置。首字计时从已标注起声开始，覆盖回放到发布字幕的完整链路。
-- [ ] 先用已知参考和错字测试计分，再执行 `& $python .\tools\asr_bench.py --manifest $manifest --whisper-model $modelDir --wav2vec-model $wav2VecModel --out $resultsCsv`。核对两个引擎对每条样本均有结果，比较首字延迟、临时文字改写次数和定稿错误率。中文按字计分，中英混说按汉字及英文词计分。统一做 Unicode NFKC、英文大小写和标点归一化，保留原始文本以便复核。
+- [x] `ReplayAudioSource(wav_path: Path)` 以原速交付带样本位置的 PCM。`Wav2VecRecognizer(model_dir: Path)` 通过 Transformers 加载本地中文微调的 CTC 模型与处理器，实现 `SpeechRecognizer`，在同一个 Python 会话流程中与 Whisper 对照。两个模型分别加载一次并预热。
+- [x] 基准程序以 `--manifest` 读取含 `audio`、`reference`、`language`、`speechStartSeconds` 的 UTF-8 CSV，以 `--whisper-model`、`--wav2vec-model` 接收本地模型路径，以 `--out` 写结果。每条样本分别运行两次独立会话，每个引擎一次，两次沿用相同分段设置。首字计时从已标注起声开始，覆盖回放到发布字幕的完整链路。
+- [x] 先用已知参考和错字测试计分，再执行 `& $python .\tools\asr_bench.py --manifest $manifest --whisper-model $modelDir --wav2vec-model $wav2VecModel --out $resultsCsv`。核对两个引擎对每条样本均有结果，比较首字延迟、临时文字改写次数和定稿错误率。中文按字计分，中英混说按汉字及英文词计分。统一做 Unicode NFKC、英文大小写和标点归一化，保留原始文本以便复核。
+
+**记录**　实测见[测试记录](../../test-records.md)。`torch==2.15.0+cpu`、`transformers==5.24.1`、`jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn`（Apache-2.0，1.28 GB，319M 参数）；45 个单测通过（`Ran 45 tests in 1.110s`）。两条样本（6.00 s 普通话、13.53 s 中英混说）各跑一次独立会话：wav2vec 首字 1.28 / 1.05 s、改写 7 / 10 次、CER 0.400 / 0.778；whisper 首字 2.56 / 4.21 s、改写 1 / 2 次、CER 0.267 / 0.296。wav2vec 中英混说不输出英文。偏差：CTC 初版冒烟用整段音频、基准走会话分段，同一句录音的定稿文本不同（分段起点影响 CTC 上下文），已按会话结果记录。
 - [ ] 分语料组报告模型与运行配置、延迟及错误率。依据实测向用户提交是否接入第二引擎的建议。

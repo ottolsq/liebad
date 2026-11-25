@@ -9,6 +9,7 @@
 | 3 | 2026-11-24 | 接入 Whisper 和麦克风 | 21 个单测与集成测试通过；真实 WASAPI 采集到语音并转写成功，需做电平归一化 |
 | 4 | 2026-11-24 | 置顶悬浮窗原型 | 25 个单测通过；真实麦克风端到端跑通，首字约 2.0 s，置顶、停止导出、关闭后重开麦克风均实测通过 |
 | 5 | 2026-11-24 | 应用音频回环 | 36 个单测通过；浏览器与抖音同时播放时各自只识别选中进程，暂停播放后自动定稿，采集中关闭真实抖音会提示重新选择音源 |
+| 6 | 2026-11-25 | Whisper 与 wav2vec 2.0 对比 | 45 个单测通过；wav2vec 2.0 首字 1.05–1.28 s（Whisper 2.56–4.21 s），但定稿 CER 0.400/0.778（Whisper 0.267/0.296）且不输出英文 |
 
 ## 第 1 批：本地工具链与 Whisper
 
@@ -357,3 +358,61 @@ $env:LIEBAD_WHISPER_MODEL = ".\models\faster-whisper-small"
 - 关闭应用后会话以 `FAULTED` 收尾，界面提示「目标应用已退出，请重新选择音源后再开始」，「开始」恢复可用、列表已刷新，可直接重选；真实抖音关闭场景已复测通过。
 - 待办：会话内无法向真实应用发送媒体暂停键（UIPI 拒绝 `PostMessage`，返回 `ERROR_ACCESS_DENIED`），暂停验收由人工操作完成；最小化窗口的应用不在 `list_app_sources()` 结果里（只枚举可见窗口），用户需把窗口恢复后刷新列表。
 - 测试脚本层面的限制：本会话内 `taskkill` 无法终止沙箱内的子进程（`WaitForSingleObject` 仍超时），自动化改用 `Popen.terminate()`，不影响产品逻辑。
+
+## 第 6 批：Whisper 与 wav2vec 2.0 对比
+
+### 环境
+
+| 项目 | 值 |
+|---|---|
+| 系统 | Windows 25H2 build `26200`，x64 |
+| Python | 3.12.16（`.venv`），`uv pip install` 安装 |
+| 新增依赖 | `torch==2.15.0+cpu`（`--index-url https://download.pytorch.org/whl/cpu`）、`transformers==5.24.1`、`safetensors==0.8.0`；`pip check` 退出码 `0` |
+| 权重 | `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn`（Apache-2.0，1,184,401 次下载），6 个文件共 1,276,350,040 B，放在 `models/wav2vec2-large-xlsr-53-chinese-zh-cn/` |
+| Whisper 基线 | `models/faster-whisper-small`（CTranslate2，CPU INT8，`cpu_threads=6`） |
+| 语料 | `temp/audio/aishell_sample.wav`（6.00 s，普通话）、`temp/audio/recording_2.wav`（13.53 s，中英混说） |
+
+### 改动文件
+
+| 文件 | 内容 |
+|---|---|
+| `src/liebad/replay_audio.py` | `ReplayAudioSource`：按原速交付 320 样本块，带 `start_sample`、可注入 `clock`/`sleep`、`gain` 限幅、`request_stop()` |
+| `src/liebad/wav2vec_recognizer.py` | `Wav2VecRecognizer`：`AutoProcessor` + `AutoModelForCTC`，CTC 贪心解码后 `opencc` 繁转简，实现 `SpeechRecognizer` |
+| `tools/asr_bench.py` | 读 `--manifest`（`audio`/`reference`/`language`/`speechStartSeconds`），每条样本按引擎各跑一次独立会话，统计首字延迟、草稿改写次数与 CER，写 `--out` CSV |
+| `tests/unit/test_asr_bench.py` | 9 个用例：中英混排分词、归一化、编辑距离计分、回放分块与停止、增益限幅、非单声道拒绝、manifest 读取 |
+
+### 实施过程
+
+1. 经用户批准下载 `jonatasgrosman` 版权重与 `torch` CPU 轮子；`transformers` 一次性装好，`pip check` 无冲突。
+2. 冒烟：`load 0.78s`、`warmup 1.75s`、319M 参数，6 s 音频 1.64–1.77 s（RTF 0.27–0.29）。
+3. 标注起声：按 20 ms 帧 RMS 取峰值 25% 且连续 3 帧，`aishell_sample` 0.52 s、`recording_2` 1.68 s，写入 `temp/bench/manifest.csv`。
+4. 基准：`tools/asr_bench.py` 以 `CaptionOptions(partial_interval_ms=400, pause_duration_ms=1200, speech_rms_threshold=0.02)` 跑两条样本 × 两个引擎，每条样本归一化到峰值 0.3 后按原速回放。
+
+### 结果
+
+| 样本 | 引擎 | 首字 (s) | 草稿次数 | 改写次数 | 定稿 CER | 会话时长 (s) |
+|---|---|---|---|---|---|---|
+| aishell_sample | whisper | 2.56 | 2 | 1 | 0.267（4/15） | 9.72 |
+| aishell_sample | wav2vec | **1.28** | 8 | 7 | 0.400（6/15） | 8.20 |
+| recording_2 | whisper | 4.21 | 3 | 2 | 0.296（8/27） | 15.38 |
+| recording_2 | wav2vec | **1.05** | 11 | 10 | 0.778（21/27） | 13.89 |
+
+定稿文本对照：
+
+- 中文：参考「而 对 楼市 成交 抑制 作用 最 大 的 限 购」；whisper `而对面楼市成交一直作用最大的先购`；wav2vec `而对面楼是乘胶一支作用最大的限购`。
+- 中英混说：参考「如果你是通过 API 调用 最稳妥按中文五百字 英文一千字 以内 来写」；whisper `如果你是通过API调用最文破坏中文500字英文1000次 以内来写`；wav2vec `果拟视通过黑批埃钓泳最文佛按充文无外此因文亦前次 伊内莱学`。
+
+### 命令
+
+```powershell
+$python = (Resolve-Path .\.venv\Scripts\python.exe).Path
+& $python -m unittest discover -s tests/unit
+& $python .\tools\asr_bench.py --manifest .\temp\bench\manifest.csv --whisper-model .\models\faster-whisper-small --wav2vec-model .\models\wav2vec2-large-xlsr-53-chinese-zh-cn --out .\temp\bench\results.csv
+```
+
+### 结论与待办
+
+- wav2vec 2.0 首字明显更快（1.05–1.28 s，约为 Whisper 的 40%），因为 CTC 帧同步、单次前向就能出字；Whisper 需要等更长上下文且单次 2.8 s。
+- 但 wav2vec 2.0 定稿质量更差：中文 CER 0.400 对 0.267，中英混说 0.778 对 0.296；中英混说时 CTC 只输出汉字，英文全部丢失（`API`→`黑批埃`、`一千`→`亦前次`）。
+- wav2vec 草稿次数多、改写也多（7–10 次），Whisper 草稿少（1–2 次改写）主要因为单次推理 2.8 s 跟不上 400 ms 的刷新间隔，不是稳定性更好。
+- 建议：不把 wav2vec 2.0 作为定稿引擎；可考虑只做临时字幕的第二候选，届时需要接入 `pyctcdecode` + 语言模型来压低改写次数，并接受没有英文输出。
