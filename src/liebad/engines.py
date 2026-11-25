@@ -7,9 +7,17 @@ from pathlib import Path
 
 ENGINE_WHISPER = "whisper"
 ENGINE_WAV2VEC = "wav2vec"
+ENGINE_HYBRID = "hybrid"
 
 #: Engines offered in the UI, in display order.
-ENGINES = (ENGINE_WHISPER, ENGINE_WAV2VEC)
+ENGINES = (ENGINE_WHISPER, ENGINE_WAV2VEC, ENGINE_HYBRID)
+
+#: Short names used in status lines.
+ENGINE_LABELS = {
+    ENGINE_WHISPER: "Whisper",
+    ENGINE_WAV2VEC: "wav2vec",
+    ENGINE_HYBRID: "混合",
+}
 
 #: Environment override for the wav2vec 2.0 checkpoint directory.
 WAV2VEC_MODEL_ENV = "LIEBAD_WAV2VEC_MODEL"

@@ -33,6 +33,8 @@ from liebad.contracts import (
     FinalCaption,
 )
 from liebad.engines import (
+    ENGINE_HYBRID,
+    ENGINE_LABELS,
     ENGINE_WAV2VEC,
     ENGINE_WHISPER,
     normalize_engine,
@@ -50,6 +52,7 @@ SOURCE_KINDS = (("mic", "麦克风"), ("app", "应用（进程回环）"))
 ENGINE_CHOICES = (
     (ENGINE_WHISPER, "Whisper（定稿准）"),
     (ENGINE_WAV2VEC, "wav2vec 2.0（首字快）"),
+    (ENGINE_HYBRID, "混合（wav2vec 草稿 + Whisper 定稿）"),
 )
 
 
@@ -223,13 +226,10 @@ class CaptionOverlay(QWidget):
                 "请先选择一个应用窗口" if kind == "app" else "请先选择一个输入设备"
             )
             return
-        if engine == ENGINE_WAV2VEC:
-            if not self._wav2vec_dir.is_dir():
-                self._status.setText(
-                    f"wav2vec 2.0 模型目录不存在：{self._wav2vec_dir}"
-                )
-                return
-        elif self._recognizer is None:
+        if engine in (ENGINE_WAV2VEC, ENGINE_HYBRID) and not self._wav2vec_dir.is_dir():
+            self._status.setText(f"wav2vec 2.0 模型目录不存在：{self._wav2vec_dir}")
+            return
+        if engine in (ENGINE_WHISPER, ENGINE_HYBRID) and self._recognizer is None:
             self._status.setText("模型还在加载，请稍候再点开始")
             return
         if not self._model_dir.is_dir():
@@ -261,7 +261,11 @@ class CaptionOverlay(QWidget):
                 pause_duration_ms=1200,
                 speech_rms_threshold=0.02,
             ),
-            recognizer=self._recognizer if engine == ENGINE_WHISPER else None,
+            recognizer=(
+                self._recognizer
+                if engine in (ENGINE_WHISPER, ENGINE_HYBRID)
+                else None
+            ),
             partial_recognizer=(
                 self._partial_recognizer if engine == ENGINE_WHISPER else None
             ),
@@ -279,7 +283,9 @@ class CaptionOverlay(QWidget):
         self._thread = thread
         self._started_at = time.perf_counter()
         self._set_running(True)
-        self._status.setText(f"采集中（{label} · {self._engine.currentText()}）…")
+        self._status.setText(
+            f"采集中（{label} · {ENGINE_LABELS[engine]}）…"
+        )
         thread.start()
 
     def stop_capture(self) -> None:

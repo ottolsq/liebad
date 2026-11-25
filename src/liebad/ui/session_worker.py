@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from liebad.contracts import AudioSource, CaptionOptions, CaptionSnapshot
 from liebad.engines import (
+    ENGINE_HYBRID,
     ENGINE_WAV2VEC,
     ENGINE_WHISPER,
     normalize_engine,
@@ -104,12 +105,15 @@ class SessionWorker(QObject):
     def _build_recognizers(self):
         """Return the final and provisional recognizers for the chosen engine."""
 
-        if self._recognizer is not None:
-            return self._recognizer, self._partial_recognizer
         if self._engine == ENGINE_WAV2VEC:
+            if self._recognizer is not None:
+                return self._recognizer, self._partial_recognizer
             return self._make_wav2vec()
-        recognizer = WhisperRecognizer(self._model_dir, cpu_threads=6)
-        return recognizer, self._partial_recognizer or self._load_partial_recognizer()
+        final = self._recognizer or WhisperRecognizer(self._model_dir, cpu_threads=6)
+        if self._engine == ENGINE_HYBRID:
+            partial = self._partial_recognizer or self._make_wav2vec_partial()
+            return final, partial
+        return final, self._partial_recognizer or self._load_partial_recognizer()
 
     def _make_wav2vec(self):
         """Load the CTC engine; it serves finals and drafts with one instance."""
@@ -122,6 +126,16 @@ class SessionWorker(QObject):
         # before the source opens so the first draft is not delayed by it.
         model.warm_up()
         return model, None
+
+    def _make_wav2vec_partial(self):
+        """Load the CTC engine for drafts while Whisper keeps the finals."""
+
+        from liebad.wav2vec_recognizer import Wav2VecRecognizer
+
+        directory = require_model_dir(wav2vec_model_dir(self._wav2vec_dir))
+        model = Wav2VecRecognizer(directory, torch_threads=2)
+        model.warm_up()
+        return model
 
     def _load_partial_recognizer(self) -> WhisperRecognizer | None:
         """Load the cheaper provisional model, or fall back to the main one."""

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from liebad.engines import (
     DEFAULT_WAV2VEC_DIR,
+    ENGINE_HYBRID,
+    ENGINE_LABELS,
     ENGINE_WAV2VEC,
     ENGINE_WHISPER,
     WAV2VEC_MODEL_ENV,
@@ -25,6 +27,12 @@ class NormalizeEngineTest(unittest.TestCase):
     def test_known_names_are_case_and_space_insensitive(self) -> None:
         self.assertEqual(normalize_engine(" WAV2VEC "), ENGINE_WAV2VEC)
         self.assertEqual(normalize_engine("Whisper"), ENGINE_WHISPER)
+        self.assertEqual(normalize_engine("Hybrid"), ENGINE_HYBRID)
+
+    def test_every_engine_has_a_short_label(self) -> None:
+        self.assertEqual(
+            set(ENGINE_LABELS), {ENGINE_WHISPER, ENGINE_WAV2VEC, ENGINE_HYBRID}
+        )
 
     def test_unknown_name_is_rejected(self) -> None:
         with self.assertRaises(ValueError):

@@ -10,7 +10,7 @@
 | 4 | 2026-11-24 | 置顶悬浮窗原型 | 25 个单测通过；真实麦克风端到端跑通，首字约 2.0 s，置顶、停止导出、关闭后重开麦克风均实测通过 |
 | 5 | 2026-11-24 | 应用音频回环 | 36 个单测通过；浏览器与抖音同时播放时各自只识别选中进程，暂停播放后自动定稿，采集中关闭真实抖音会提示重新选择音源 |
 | 6 | 2026-11-25 | Whisper 与 wav2vec 2.0 对比 | 45 个单测通过；wav2vec 2.0 首字 1.05–1.28 s（Whisper 2.56–4.21 s），但定稿 CER 0.400/0.778（Whisper 0.267/0.296）且不输出英文 |
-| 6（追加） | 2026-11-25 | 界面可选识别引擎 | 53 个单测通过；悬浮窗可在 Whisper 与 wav2vec 2.0 间切换，wav2vec 按需加载并预热，离屏实测 2 段定稿、首字 2.7 s |
+| 6（追加） | 2026-11-25 | 界面可选识别引擎 | 59 个单测通过；悬浮窗可在 Whisper、wav2vec 2.0 与混合三种模式间切换，混合模式首字 3.0 s 且定稿与纯 Whisper 一致 |
 
 ## 第 1 批：本地工具链与 Whisper
 
@@ -426,20 +426,25 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 
 | 文件 | 改动 |
 |---|---|
-| `src/liebad/engines.py` | 新增 `ENGINE_WHISPER` / `ENGINE_WAV2VEC`、`normalize_engine()`、`wav2vec_model_dir()`（参数 → `LIEBAD_WAV2VEC_MODEL` → `models/wav2vec2-large-xlsr-53-chinese-zh-cn`）、`require_model_dir()` |
-| `src/liebad/ui/session_worker.py` | `SessionWorker(..., engine=..., wav2vec_dir=...)`：`_build_recognizers()` 按引擎分派，wav2vec 分支懒导入 `Wav2VecRecognizer`、`warm_up()` 后单实例兼任定稿与草稿；新增 `capture_started` 信号（模型就绪、音源打开后发出） |
-| `src/liebad/ui/overlay.py` | 工具栏新增「识别」下拉（`Whisper（定稿准）` / `wav2vec 2.0（首字快）`）；开始前校验所选引擎的模型目录；运行中禁用；首字延迟改从 `capture_started` 起算 |
-| `tests/unit/test_engines.py` | 8 个用例：默认值、大小写与空白、未知引擎报错、显式/环境/默认目录优先级、缺目录报错 |
+| `src/liebad/engines.py` | 新增 `ENGINE_WHISPER` / `ENGINE_WAV2VEC` / `ENGINE_HYBRID`、`ENGINE_LABELS`、`normalize_engine()`、`wav2vec_model_dir()`（参数 → `LIEBAD_WAV2VEC_MODEL` → `models/wav2vec2-large-xlsr-53-chinese-zh-cn`）、`require_model_dir()` |
+| `src/liebad/ui/session_worker.py` | `SessionWorker(..., engine=..., wav2vec_dir=...)`：`_build_recognizers()` 按引擎分派；wav2vec 分支懒导入 `Wav2VecRecognizer`、`warm_up()` 后单实例兼任定稿与草稿；混合分支用 `_make_wav2vec_partial()`（`torch_threads=2`）只出草稿、定稿仍用 Whisper `small`；新增 `capture_started` 信号（模型就绪、音源打开后发出） |
+| `src/liebad/ui/overlay.py` | 工具栏新增「识别」下拉（`Whisper（定稿准）` / `wav2vec 2.0（首字快）` / `混合（wav2vec 草稿 + Whisper 定稿）`）；开始前校验所选引擎的模型目录；运行中禁用；首字延迟改从 `capture_started` 起算 |
+| `tests/unit/test_engines.py` | 9 个用例：默认值、大小写与空白、未知引擎报错、三种引擎短名齐全、显式/环境/默认目录优先级、缺目录报错 |
+| `tests/unit/test_session_worker.py` | 5 个用例：Whisper 保留注入的一对识别器、wav2vec 单实例、混合保留 Whisper 定稿 + 注入的草稿引擎、未知引擎在加载前报错、`_build_recognizers()` 不打开音源 |
 
 ### 结果
 
-- 全量单测 `Ran 53 tests in 1.019s` / `OK`。
-- 离屏整链（`temp\ui_engine_live.py`，把 `MicrophoneSource` 换成 `ReplayAudioSource(temp\audio\recording_2.wav, gain=15)`）：选 `wav2vec` 后状态 `已完成，2 段，首字 2.7 s，可导出`，草稿 `国尼` → `博拟室通过威` → `果你是通过黑批埃调勇最温佛`，导出 `temp\audio\engine_w2v.txt` 两段。
-- 同一脚本第一次实测 `首字 11.9 s`，原因是把 5.8 s 的模型加载算进了延迟；加 `capture_started` 后改为 2.7 s。
+- 全量单测 `Ran 59 tests in 1.653s` / `OK`。
+- 离屏整链（`temp\ui_engine_live.py`，把 `MicrophoneSource` 换成 `ReplayAudioSource(temp\audio\recording_2.wav, gain=15)`）：
+  - 选 `wav2vec`：`已完成，2 段，首字 2.7 s，可导出`，草稿 `国尼` → `博拟室通过威` → `果你是通过黑批埃调勇最温佛`，导出 `temp\audio\engine_w2v.txt`。
+  - 选 `hybrid`：先预加载 Whisper（状态 `就绪，模型已加载（faster-whisper-small + faster-whisper-base，wav2vec 2.0 可选）`），采集中草稿由 wav2vec 给出（`博尼市通过` → `博尼果你是通过批埃调泳` → `果你是通过黑批埃调泳最温佛案`），`已完成，2 段，首字 3.0 s`，导出 `temp\audio\engine_hybrid.txt`，正文与纯 Whisper 一致（`如果你是通过API调用最文破坏中文500字英文1000次`）。
+  - 选 `whisper` 回归：`已完成，2 段，首字 5.6 s`，导出 `temp\audio\engine_whisper.txt` 与混合模式相同文本。
+- 同一脚本第一次实测 `首字 11.9 s`，原因是把 5.8 s 的模型加载算进了延迟；加 `capture_started` 后改为 2.7–3.0 s。
 - 排障教训：用普通函数连接 Qt 信号做记录会拿不到快照（必须用 `QObject` 的 `@Slot`），曾误判为「wav2vec 不出草稿」。
 
 ### 限制
 
 - wav2vec 权重 1.28 GB 与 `torch==2.15.0+cpu`、`transformers==5.24.1` 目前只装在 `.venv`，没有写进 `pyproject.toml`；要分发需单列可选依赖，并把权重放到下载步骤。
 - 选 wav2vec 时 worker 内按需加载约 5.8 s，界面在此期间只显示「采集中…」，未做进度提示。
+- 混合模式下 wav2vec 草稿（`torch_threads=2`）与 Whisper 定稿抢 CPU，草稿从每 0.5 s 一次降到约 2 s 一次；首字仍比纯 Whisper 快（3.0 s 对 5.6 s）。
 - wav2vec 中英混说不输出英文，这一点没有随该选项改善。
