@@ -1,10 +1,8 @@
 # Liebad
 
-Liebad 为 Windows 上的现场讲话、抖音桌面客户端和浏览器视频生成实时字幕。项目处于立项阶段：首版以麦克风、抖音桌面客户端和浏览器为音源，用本地 Whisper 识别，在屏幕顶部的置顶悬浮窗显示字幕，并导出 UTF-8 `.txt`。麦克风字幕原型已可运行。
+Liebad 为 Windows 上的现场讲话、抖音桌面客户端和浏览器视频生成实时字幕：本地识别，置顶悬浮窗显示，导出 UTF-8 `.txt`。麦克风字幕原型已可运行。以下命令在 Windows、PowerShell、仓库根目录执行，解释器为 uv 装的 Python 3.12 建出的 `.venv`。
 
 ## 快速开始
-
-Windows、PowerShell，仓库根目录执行，解释器为 uv 装的 Python 3.12 建出的 `.venv`：
 
 ```powershell
 $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
@@ -14,18 +12,21 @@ $env:LIEBAD_WHISPER_MODEL = ".\models\faster-whisper-small"
 & $python -m liebad
 ```
 
-窗口出现在屏幕顶部，选择麦克风后点「开始」边说边看字幕，点「停止」后可「导出」UTF-8 `.txt`。首次启动要加载并预热两个模型（约 8 秒）；临时字幕默认用同级的 `faster-whisper-base`，可用 `LIEBAD_WHISPER_PARTIAL_MODEL` 指定。
+窗口出现在屏幕顶部，选择音源后点「开始」边说边看字幕，点「停止」后可「导出」。首次启动要加载并预热 Whisper `small` 与 `base`（约 8 秒）；临时字幕默认用同级的 `faster-whisper-base`，可用 `LIEBAD_WHISPER_PARTIAL_MODEL` 指定。
 
-识别集成测试需要素材，缺素材时跳过并报出缺少的变量名：
+### 可选：wav2vec 2.0 与混合模式
+
+「识别」下拉里的 wav2vec 2.0 与混合模式需要额外依赖和本地权重（`jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn`，Apache-2.0，约 1.28 GB）：
 
 ```powershell
-$env:LIEBAD_TEST_MODEL = ".\models\faster-whisper-small"
-$env:LIEBAD_TEST_WAV = ".\temp\audio\recording_2.wav"
-$env:LIEBAD_TEST_KEYWORD = "最稳妥"
-& $python -m unittest discover -s tests/integration
+& uv pip install --python $python --index-url https://download.pytorch.org/whl/cpu torch
+& uv pip install --python $python transformers
+& $python -c "from huggingface_hub import snapshot_download; snapshot_download('jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn', local_dir='models/wav2vec2-large-xlsr-53-chinese-zh-cn')"
 ```
 
-模型与素材的获取方式、实测耗时和已知问题见[测试记录](docs/test-records.md)。
+权重放在别处时用 `$env:LIEBAD_WAV2VEC_MODEL = "..."` 指定（没装 uv 时把上面两条 `uv pip install` 换成 `& $python -m pip install`）；版本、体积与两套模型的实测数字见[测试记录](docs/test-records.md)。
+
+集成测试需要素材，缺素材时跳过并报出缺少的变量名：设 `LIEBAD_TEST_MODEL`、`LIEBAD_TEST_WAV`、`LIEBAD_TEST_KEYWORD` 后运行 `& $python -m unittest discover -s tests/integration`。
 
 ## 文档
 

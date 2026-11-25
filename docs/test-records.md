@@ -407,6 +407,9 @@ $env:LIEBAD_WHISPER_MODEL = ".\models\faster-whisper-small"
 
 ```powershell
 $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
+& uv pip install --python $python --index-url https://download.pytorch.org/whl/cpu torch
+& uv pip install --python $python transformers
+& $python -c "from huggingface_hub import snapshot_download; snapshot_download('jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn', local_dir='models/wav2vec2-large-xlsr-53-chinese-zh-cn')"
 & $python -m unittest discover -s tests/unit
 & $python .\tools\asr_bench.py --manifest .\temp\bench\manifest.csv --whisper-model .\models\faster-whisper-small --wav2vec-model .\models\wav2vec2-large-xlsr-53-chinese-zh-cn --out .\temp\bench\results.csv
 ```
@@ -444,7 +447,7 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 
 ### 限制
 
-- wav2vec 权重 1.28 GB 与 `torch==2.15.0+cpu`、`transformers==5.24.1` 目前只装在 `.venv`，没有写进 `pyproject.toml`；要分发需单列可选依赖，并把权重放到下载步骤。
+- wav2vec 权重 1.28 GB 与 `torch==2.15.0+cpu`、`transformers==5.24.1` 目前只装在 `.venv`，没有写进 `pyproject.toml`；安装与权重下载步骤已写进 [README 的可选引擎小节](../README.md)。
 - 选 wav2vec 时 worker 内按需加载约 5.8 s，界面在此期间只显示「采集中…」，未做进度提示。
 - 混合模式下 wav2vec 草稿（`torch_threads=2`）与 Whisper 定稿抢 CPU，草稿从每 0.5 s 一次降到约 2 s 一次；首字仍比纯 Whisper 快（3.0 s 对 5.6 s）。
 - wav2vec 中英混说不输出英文，这一点没有随该选项改善。
