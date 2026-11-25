@@ -11,5 +11,8 @@ __pycache__/
 build/
 dist/
 
+# Per-user overlay settings when %APPDATA% is not writable
+.liebad-settings.ini
+
 # Stray logs dropped by system tools
 debug.log

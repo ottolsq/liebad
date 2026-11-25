@@ -19,10 +19,10 @@ KIND_APPLICATION = "app"
 SOURCE_KINDS = (KIND_MICROPHONE, KIND_APPLICATION)
 
 MODEL_ENV = "LIEBAD_WHISPER_MODEL"
+SETTINGS_ENV = "LIEBAD_SETTINGS"
 DEFAULT_WHISPER_MODEL = Path("models/faster-whisper-small")
 
-_ORGANISATION = "Liebad"
-_APPLICATION = "Overlay"
+_FALLBACK_FILE = ".liebad-settings.ini"
 
 _ENGINE_KEY = "engine"
 _KIND_KEY = "source/kind"
@@ -33,13 +33,16 @@ _WAV2VEC_KEY = "model/wav2vec"
 
 
 class OverlaySettings:
-    """Typed facade over ``QSettings`` for the overlay's last choices."""
+    """Typed facade over ``QSettings`` for the overlay's last choices.
+
+    The file lives under ``%APPDATA%`` normally, ``LIEBAD_SETTINGS`` when that
+    variable is set, and next to the working directory when neither is
+    writable (sandboxes deny ``%APPDATA%`` writes).
+    """
 
     def __init__(self, path: Path | None = None) -> None:
-        if path is None:
-            self._settings = QSettings(_ORGANISATION, _APPLICATION)
-        else:
-            self._settings = QSettings(str(path), QSettings.Format.IniFormat)
+        self.path = Path(path) if path is not None else _writable_settings_path()
+        self._settings = QSettings(str(self.path), QSettings.Format.IniFormat)
 
     # ---------------------------------------------------------------- engine
 
@@ -123,6 +126,11 @@ class OverlaySettings:
 
     # --------------------------------------------------------------- helpers
 
+    def sync(self) -> None:
+        """Flush pending writes; ``QSettings`` otherwise holds them in memory."""
+
+        self._settings.sync()
+
     def _text(self, key: str) -> str | None:
         value = self._settings.value(key, "")
         text = str(value).strip() if value is not None else ""
@@ -140,6 +148,37 @@ class OverlaySettings:
             self._settings.remove(key)
         else:
             self._settings.setValue(key, str(value))
+
+
+def _candidate_paths() -> list[Path]:
+    override = os.environ.get(SETTINGS_ENV, "").strip()
+    if override:
+        return [Path(override)]
+    paths: list[Path] = []
+    appdata = os.environ.get("APPDATA", "").strip()
+    if appdata:
+        paths.append(Path(appdata) / "Liebad" / "overlay.ini")
+    paths.append(Path.cwd() / _FALLBACK_FILE)
+    return paths
+
+
+def _can_write(path: Path) -> bool:
+    probe = path.parent / f".liebad-probe-{os.getpid()}"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError:
+        return False
+    return True
+
+
+def _writable_settings_path() -> Path:
+    candidates = _candidate_paths()
+    for candidate in candidates:
+        if _can_write(candidate):
+            return candidate
+    return candidates[-1]
 
 
 def _environment_path(name: str) -> Path | None:

@@ -440,4 +440,5 @@ class CaptionOverlay(QWidget):
         if self._worker is not None:
             self._worker.request_stop()
         self._teardown_thread()
+        self._settings.sync()
         super().closeEvent(event)

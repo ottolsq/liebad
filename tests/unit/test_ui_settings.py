@@ -24,6 +24,7 @@ from liebad.ui.settings import (
     KIND_MICROPHONE,
     MODEL_ENV,
     OverlaySettings,
+    SETTINGS_ENV,
     resolve_wav2vec_model,
     resolve_whisper_model,
 )
@@ -114,6 +115,29 @@ class OverlaySettingsTest(unittest.TestCase):
         self.assertEqual(reopened.engine, ENGINE_WAV2VEC)
         self.assertEqual(reopened.kind, KIND_APPLICATION)
         self.assertEqual(reopened.microphone, 3)
+
+
+class SettingsPathTest(unittest.TestCase):
+    def setUp(self) -> None:
+        folder = Path(tempfile.gettempdir()) / f"liebad-path-{uuid.uuid4().hex}"
+        folder.mkdir()
+        self.addCleanup(lambda: __import__("shutil").rmtree(folder, True))
+        self.folder = folder
+
+    def test_environment_override_selects_the_file(self) -> None:
+        target = self.folder / "custom.ini"
+        with environment(**{SETTINGS_ENV: str(target)}):
+            self.assertEqual(OverlaySettings().path, target)
+
+    def test_appdata_is_preferred_when_writable(self) -> None:
+        with environment(**{SETTINGS_ENV: None, "APPDATA": str(self.folder)}):
+            settings = OverlaySettings()
+            self.assertEqual(
+                settings.path, self.folder / "Liebad" / "overlay.ini"
+            )
+            settings.engine = ENGINE_WAV2VEC
+            settings.sync()
+        self.assertTrue((self.folder / "Liebad" / "overlay.ini").is_file())
 
 
 class ResolveModelTest(unittest.TestCase):

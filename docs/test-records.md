@@ -434,8 +434,8 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 | `src/liebad/ui/overlay.py` | 工具栏新增「识别」下拉（`Whisper（定稿准）` / `wav2vec 2.0（首字快）` / `混合（wav2vec 草稿 + Whisper 定稿）`）；开始前校验所选引擎的模型目录；运行中禁用；首字延迟改从 `capture_started` 起算 |
 | `tests/unit/test_engines.py` | 9 个用例：默认值、大小写与空白、未知引擎报错、三种引擎短名齐全、显式/环境/默认目录优先级、缺目录报错 |
 | `tests/unit/test_session_worker.py` | 5 个用例：Whisper 保留注入的一对识别器、wav2vec 单实例、混合保留 Whisper 定稿 + 注入的草稿引擎、未知引擎在加载前报错、`_build_recognizers()` 不打开音源 |
-| `src/liebad/ui/settings.py` | `OverlaySettings`（`QSettings` 封装：引擎、音源类型、麦克风 id、应用进程名、两个模型目录）与 `resolve_whisper_model()` / `resolve_wav2vec_model()`（参数 → 环境变量 → 上次选择 → 默认值） |
-| `tests/unit/test_ui_settings.py` | 11 个用例：默认值、引擎/音源往返、未知值回退、模型目录只在存在时返回、跨实例持久化、两条解析优先级 |
+| `src/liebad/ui/settings.py` | `OverlaySettings`（`QSettings` 封装：引擎、音源类型、麦克风 id、应用进程名、两个模型目录）与 `resolve_whisper_model()` / `resolve_wav2vec_model()`（参数 → 环境变量 → 上次选择 → 默认值）；设置文件默认 `%APPDATA%\Liebad\overlay.ini`，`LIEBAD_SETTINGS` 可覆盖，目录不可写时回退到工作目录 `.liebad-settings.ini` |
+| `tests/unit/test_ui_settings.py` | 13 个用例：默认值、引擎/音源往返、未知值回退、模型目录只在存在时返回、跨实例持久化、两条解析优先级、`LIEBAD_SETTINGS` 与 `%APPDATA%` 的路径选择 |
 
 ### 结果
 
@@ -446,7 +446,7 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
   - 选 `whisper` 回归：`已完成，2 段，首字 5.6 s`，导出 `temp\audio\engine_whisper.txt` 与混合模式相同文本。
 - 同一脚本第一次实测 `首字 11.9 s`，原因是把 5.8 s 的模型加载算进了延迟；加 `capture_started` 后改为 2.7–3.0 s。
 - 排障教训：用普通函数连接 Qt 信号做记录会拿不到快照（必须用 `QObject` 的 `@Slot`），曾误判为「wav2vec 不出草稿」。
-- 记住上次选择：`temp\settings_live.py` 离屏跑一次混合模式会话后，`QSettings` 文件里得到 `engine=hybrid`、`source/kind=mic`、`source/microphone=17`、两个模型目录；另起一个 `OverlaySettings` 实例读取一致，重建窗口后引擎下拉、音源类型与麦克风都恢复到上次的值。全量单测 `Ran 70 tests in 1.460s` / `OK`。
+- 记住上次选择：`temp\settings_live.py` 离屏跑一次混合模式会话后，`QSettings` 文件里得到 `engine=hybrid`、`source/kind=mic`、`source/microphone=17`、两个模型目录；另起一个 `OverlaySettings` 实例读取一致，重建窗口后引擎下拉、音源类型与麦克风都恢复到上次的值。本会话沙箱不允许写 `%APPDATA%`，路径检查自动回退到仓库根的 `.liebad-settings.ini`（已 gitignore）；另起进程读回 `hybrid / app / douyin.exe`，跨进程有效。全量单测 `Ran 72 tests in 1.404s` / `OK`。
 
 ### 限制
 
