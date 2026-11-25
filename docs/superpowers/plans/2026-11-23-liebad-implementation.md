@@ -89,9 +89,11 @@ write_txt(path: Path, captions: Sequence[FinalCaption]) -> None
 
 **文件**　`src/liebad/audio/process_loopback.py`、`src/liebad/audio/process_catalog.py`、`src/liebad/ui/overlay.py`、`tests/unit/test_process_loopback.py`。按所需文件范围分批验证 Windows 互操作与界面接线。
 
-- [ ] `list_app_sources() -> list[AppSource]` 返回 `AppSource(pid, process_name, window_title)`，列出带可见窗口的应用，选择时核对对应进程树。`ProcessLoopbackSource(pid: int)` 实现 `AudioSource`。按架构文档链接的微软示例，通过 `ActivateAudioInterfaceAsync` 以 `PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE` 取音，复用 PCM 转换器。
-- [ ] 模拟进程继续运行但停止送包，断言按经过时间补静音且会话定稿。模拟进程退出，断言发布 `FAULTED` 和重新选择提示。扩展界面以选择麦克风或应用，切换来源时先完成当前会话的收尾。
-- [ ] 运行 `& $python -m unittest discover -s tests/unit`。实际在浏览器和抖音桌面客户端同时播放两段不同的语音，每个应用各选一次，核对只识别选中应用，记录首次出字和导出结果。暂停目标播放确认语段定稿，再关闭目标确认可重新选择。报告写明 Windows 构建号、浏览器和抖音版本，浏览器按进程树验收。
+- [x] `list_app_sources() -> list[AppSource]` 返回 `AppSource(pid, process_name, window_title)`，列出带可见窗口的应用，选择时核对对应进程树。`ProcessLoopbackSource(pid: int)` 实现 `AudioSource`。按架构文档链接的微软示例，通过 `ActivateAudioInterfaceAsync` 以 `PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE` 取音，复用 PCM 转换器。
+- [x] 模拟进程继续运行但停止送包，断言按经过时间补静音且会话定稿。模拟进程退出，断言发布 `FAULTED` 和重新选择提示。扩展界面以选择麦克风或应用，切换来源时先完成当前会话的收尾。
+- [x] 运行 `& $python -m unittest discover -s tests/unit`。实际在浏览器和抖音桌面客户端同时播放两段不同的语音，每个应用各选一次，核对只识别选中应用，记录首次出字和导出结果。暂停目标播放确认语段定稿，再关闭目标确认可重新选择。报告写明 Windows 构建号、浏览器和抖音版本，浏览器按进程树验收。
+
+**记录**　实测见[测试记录](../../test-records.md)。36 个单测通过（`Ran 36 tests in 1.116s`）；`comtypes==1.5.0` 自行声明 `IAudioClient`/`IAudioCaptureClient`，`ActivateAudioInterfaceAsync` 直接申请 16 kHz 单声道 PCM16；Edge（pid 25744）与抖音（pid 25772）同时播放时各自隔离，首字 3.0 / 3.1 s，两份导出互不包含；暂停抖音后 58.22 s 静音、62.67 s 出第 1 条定稿，未点停止；采集 44.5 s 时关闭真实抖音，状态变为「目标应用已退出，请重新选择音源后再开始」，刷新后列表 11 项、开始按钮恢复。三处偏差：`PortAudio` 已把主线程设为 STA，`CoInitializeEx(MTA)` 报 `RPC_E_CHANGED_MODE`，改为容忍并泵 `PeekMessage` 消息；退出探测原本只在无包时进行，WASAPI 退出后仍送静音包，改为每 0.5 s 查进程句柄；`FAULTED` 的错误文本被收尾线程的后续发布覆盖，改为按状态保留 `_error`。`APP_GAIN` 由 4.0 改回 1.0（真实应用混音峰值 0.67–0.99）。限制：只枚举可见窗口，最小化后需恢复窗口再刷新；会话内无法向真实应用发送媒体暂停键（UIPI 拒绝 `PostMessage`），暂停验收由人工完成。
 
 ## 6. 对比 Whisper 和 wav2vec 2.0
 

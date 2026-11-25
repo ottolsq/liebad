@@ -300,7 +300,7 @@ $env:LIEBAD_WHISPER_PARTIAL_MODEL = ".\models\faster-whisper-base"  # 可省略�
 | 新增依赖 | `comtypes==1.5.0`（`pip check` 退出码 `0`），设备 `VAD\Process_Loopback` |
 | 采集方式 | `ActivateAudioInterfaceAsync` + `PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE`，优先直接 16 kHz 单声道 PCM16 |
 | 实测应用 | `msedge.exe`（pid 25744，B 站视频）与 `douyin.exe`（pid 25772，同时播放）；隔离对照另用两个 `powershell.exe` 播放器 `LIEBAD-AISHELL`、`LIEBAD-RECORDING` |
-| 未能覆盖 | 「关闭应用后重选音源」用自建播放器进程验证，未在真实浏览器/抖音上关闭复核 |
+| 关闭复核 | 采集中关闭真实抖音（pid 19328）：44.5 s 提示「目标应用已退出，请重新选择音源后再开始」，刷新后列表 11 项且不再含 `douyin.exe`，「开始」恢复可用（`temp\close_probe.log`） |
 
 ### 改动文件
 
