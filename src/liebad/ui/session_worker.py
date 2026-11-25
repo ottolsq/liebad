@@ -10,6 +10,13 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal, Slot
 
 from liebad.contracts import AudioSource, CaptionOptions, CaptionSnapshot
+from liebad.engines import (
+    ENGINE_WAV2VEC,
+    ENGINE_WHISPER,
+    normalize_engine,
+    require_model_dir,
+    wav2vec_model_dir,
+)
 from liebad.session import CaptionSession
 from liebad.whisper_recognizer import WhisperRecognizer
 
@@ -36,6 +43,7 @@ class SessionWorker(QObject):
     snapshot_ready = Signal(object)
     finished = Signal(object)
     failed = Signal(str)
+    capture_started = Signal()
 
     def __init__(
         self,
@@ -43,8 +51,10 @@ class SessionWorker(QObject):
         model_dir: Path,
         options: CaptionOptions | None = None,
         parent: QObject | None = None,
-        recognizer: WhisperRecognizer | None = None,
-        partial_recognizer: WhisperRecognizer | None = None,
+        recognizer=None,
+        partial_recognizer=None,
+        engine: str = ENGINE_WHISPER,
+        wav2vec_dir: Path | None = None,
     ) -> None:
         super().__init__(parent)
         self._source_factory = source_factory
@@ -52,6 +62,8 @@ class SessionWorker(QObject):
         self._options = options
         self._recognizer = recognizer
         self._partial_recognizer = partial_recognizer
+        self._engine = normalize_engine(engine)
+        self._wav2vec_dir = wav2vec_dir
         self._lock = threading.Lock()
         self._session: CaptionSession | None = None
         self._stop_requested = False
@@ -60,19 +72,13 @@ class SessionWorker(QObject):
     def run(self) -> None:
         snapshot: CaptionSnapshot | None = None
         try:
-            recognizer = self._recognizer or WhisperRecognizer(
-                self._model_dir, cpu_threads=6
-            )
-            partial = (
-                self._partial_recognizer
-                if self._partial_recognizer is not None
-                else self._load_partial_recognizer()
-            )
+            recognizer, partial = self._build_recognizers()
             with self._lock:
                 stop_requested = self._stop_requested
             # Open the microphone only after the models are ready, so the input
             # queue never holds audio recorded before recognition could start.
             source = self._source_factory()
+            self.capture_started.emit()
             session = CaptionSession(
                 source,
                 recognizer,
@@ -94,6 +100,28 @@ class SessionWorker(QObject):
         with self._lock:
             self._session = None
         self.finished.emit(snapshot)
+
+    def _build_recognizers(self):
+        """Return the final and provisional recognizers for the chosen engine."""
+
+        if self._recognizer is not None:
+            return self._recognizer, self._partial_recognizer
+        if self._engine == ENGINE_WAV2VEC:
+            return self._make_wav2vec()
+        recognizer = WhisperRecognizer(self._model_dir, cpu_threads=6)
+        return recognizer, self._partial_recognizer or self._load_partial_recognizer()
+
+    def _make_wav2vec(self):
+        """Load the CTC engine; it serves finals and drafts with one instance."""
+
+        from liebad.wav2vec_recognizer import Wav2VecRecognizer
+
+        directory = require_model_dir(wav2vec_model_dir(self._wav2vec_dir))
+        model = Wav2VecRecognizer(directory, torch_threads=6)
+        # The first forward pass pays framework and allocator warm-up; do it
+        # before the source opens so the first draft is not delayed by it.
+        model.warm_up()
+        return model, None
 
     def _load_partial_recognizer(self) -> WhisperRecognizer | None:
         """Load the cheaper provisional model, or fall back to the main one."""

@@ -104,4 +104,6 @@ write_txt(path: Path, captions: Sequence[FinalCaption]) -> None
 - [x] 先用已知参考和错字测试计分，再执行 `& $python .\tools\asr_bench.py --manifest $manifest --whisper-model $modelDir --wav2vec-model $wav2VecModel --out $resultsCsv`。核对两个引擎对每条样本均有结果，比较首字延迟、临时文字改写次数和定稿错误率。中文按字计分，中英混说按汉字及英文词计分。统一做 Unicode NFKC、英文大小写和标点归一化，保留原始文本以便复核。
 
 **记录**　实测见[测试记录](../../test-records.md)。`torch==2.15.0+cpu`、`transformers==5.24.1`、`jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn`（Apache-2.0，1.28 GB，319M 参数）；45 个单测通过（`Ran 45 tests in 1.110s`）。两条样本（6.00 s 普通话、13.53 s 中英混说）各跑一次独立会话：wav2vec 首字 1.28 / 1.05 s、改写 7 / 10 次、CER 0.400 / 0.778；whisper 首字 2.56 / 4.21 s、改写 1 / 2 次、CER 0.267 / 0.296。wav2vec 中英混说不输出英文。偏差：CTC 初版冒烟用整段音频、基准走会话分段，同一句录音的定稿文本不同（分段起点影响 CTC 上下文），已按会话结果记录。
-- [ ] 分语料组报告模型与运行配置、延迟及错误率。依据实测向用户提交是否接入第二引擎的建议。
+- [x] 分语料组报告模型与运行配置、延迟及错误率。依据实测向用户提交是否接入第二引擎的建议。
+
+**记录**　已按用户要求把两个引擎都做成悬浮窗可选项（`src/liebad/engines.py`、`SessionWorker(engine=...)`、界面「识别」下拉）：Whisper 仍走 small 定稿 + base 临时字幕，wav2vec 2.0 由 worker 按需加载并 `warm_up()` 后作为定稿与临时字幕共用实例；`LIEBAD_WAV2VEC_MODEL` 可覆盖权重目录，默认 `models/wav2vec2-large-xlsr-53-chinese-zh-cn`。新增 `tests/unit/test_engines.py`（8 个用例），53 个单测通过（`Ran 53 tests in 1.019s`）。离屏实测：选 wav2vec 后完整会话 2 段定稿、导出成功，首字 2.7 s（计时改从 `capture_started` 信号起算，含模型加载的 11.9 s 不再误报）。

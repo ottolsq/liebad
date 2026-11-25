@@ -10,6 +10,7 @@
 | 4 | 2026-11-24 | 置顶悬浮窗原型 | 25 个单测通过；真实麦克风端到端跑通，首字约 2.0 s，置顶、停止导出、关闭后重开麦克风均实测通过 |
 | 5 | 2026-11-24 | 应用音频回环 | 36 个单测通过；浏览器与抖音同时播放时各自只识别选中进程，暂停播放后自动定稿，采集中关闭真实抖音会提示重新选择音源 |
 | 6 | 2026-11-25 | Whisper 与 wav2vec 2.0 对比 | 45 个单测通过；wav2vec 2.0 首字 1.05–1.28 s（Whisper 2.56–4.21 s），但定稿 CER 0.400/0.778（Whisper 0.267/0.296）且不输出英文 |
+| 6（追加） | 2026-11-25 | 界面可选识别引擎 | 53 个单测通过；悬浮窗可在 Whisper 与 wav2vec 2.0 间切换，wav2vec 按需加载并预热，离屏实测 2 段定稿、首字 2.7 s |
 
 ## 第 1 批：本地工具链与 Whisper
 
@@ -416,3 +417,29 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 - 但 wav2vec 2.0 定稿质量更差：中文 CER 0.400 对 0.267，中英混说 0.778 对 0.296；中英混说时 CTC 只输出汉字，英文全部丢失（`API`→`黑批埃`、`一千`→`亦前次`）。
 - wav2vec 草稿次数多、改写也多（7–10 次），Whisper 草稿少（1–2 次改写）主要因为单次推理 2.8 s 跟不上 400 ms 的刷新间隔，不是稳定性更好。
 - 建议：不把 wav2vec 2.0 作为定稿引擎；可考虑只做临时字幕的第二候选，届时需要接入 `pyctcdecode` + 语言模型来压低改写次数，并接受没有英文输出。
+
+## 第 6 批（追加）：界面可选识别引擎
+
+用户要求「用户能够在这两种模型中选择」，因此把两个引擎都做成悬浮窗可选项，而不是只保留对比脚本。
+
+### 改动
+
+| 文件 | 改动 |
+|---|---|
+| `src/liebad/engines.py` | 新增 `ENGINE_WHISPER` / `ENGINE_WAV2VEC`、`normalize_engine()`、`wav2vec_model_dir()`（参数 → `LIEBAD_WAV2VEC_MODEL` → `models/wav2vec2-large-xlsr-53-chinese-zh-cn`）、`require_model_dir()` |
+| `src/liebad/ui/session_worker.py` | `SessionWorker(..., engine=..., wav2vec_dir=...)`：`_build_recognizers()` 按引擎分派，wav2vec 分支懒导入 `Wav2VecRecognizer`、`warm_up()` 后单实例兼任定稿与草稿；新增 `capture_started` 信号（模型就绪、音源打开后发出） |
+| `src/liebad/ui/overlay.py` | 工具栏新增「识别」下拉（`Whisper（定稿准）` / `wav2vec 2.0（首字快）`）；开始前校验所选引擎的模型目录；运行中禁用；首字延迟改从 `capture_started` 起算 |
+| `tests/unit/test_engines.py` | 8 个用例：默认值、大小写与空白、未知引擎报错、显式/环境/默认目录优先级、缺目录报错 |
+
+### 结果
+
+- 全量单测 `Ran 53 tests in 1.019s` / `OK`。
+- 离屏整链（`temp\ui_engine_live.py`，把 `MicrophoneSource` 换成 `ReplayAudioSource(temp\audio\recording_2.wav, gain=15)`）：选 `wav2vec` 后状态 `已完成，2 段，首字 2.7 s，可导出`，草稿 `国尼` → `博拟室通过威` → `果你是通过黑批埃调勇最温佛`，导出 `temp\audio\engine_w2v.txt` 两段。
+- 同一脚本第一次实测 `首字 11.9 s`，原因是把 5.8 s 的模型加载算进了延迟；加 `capture_started` 后改为 2.7 s。
+- 排障教训：用普通函数连接 Qt 信号做记录会拿不到快照（必须用 `QObject` 的 `@Slot`），曾误判为「wav2vec 不出草稿」。
+
+### 限制
+
+- wav2vec 权重 1.28 GB 与 `torch==2.15.0+cpu`、`transformers==5.24.1` 目前只装在 `.venv`，没有写进 `pyproject.toml`；要分发需单列可选依赖，并把权重放到下载步骤。
+- 选 wav2vec 时 worker 内按需加载约 5.8 s，界面在此期间只显示「采集中…」，未做进度提示。
+- wav2vec 中英混说不输出英文，这一点没有随该选项改善。

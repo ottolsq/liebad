@@ -32,6 +32,12 @@ from liebad.contracts import (
     CaptionState,
     FinalCaption,
 )
+from liebad.engines import (
+    ENGINE_WAV2VEC,
+    ENGINE_WHISPER,
+    normalize_engine,
+    wav2vec_model_dir,
+)
 from liebad.export_txt import write_txt
 from liebad.ui.session_worker import SessionWorker, partial_model_dir
 from liebad.whisper_recognizer import WhisperRecognizer
@@ -41,6 +47,10 @@ MODEL_ENV = "LIEBAD_WHISPER_MODEL"
 WINDOW_HEIGHT = 150
 APP_GAIN = 1.0
 SOURCE_KINDS = (("mic", "麦克风"), ("app", "应用（进程回环）"))
+ENGINE_CHOICES = (
+    (ENGINE_WHISPER, "Whisper（定稿准）"),
+    (ENGINE_WAV2VEC, "wav2vec 2.0（首字快）"),
+)
 
 
 class CaptionOverlay(QWidget):
@@ -56,6 +66,7 @@ class CaptionOverlay(QWidget):
         self._model_dir = Path(
             model_dir or os.environ.get(MODEL_ENV) or DEFAULT_MODEL_DIR
         )
+        self._wav2vec_dir = wav2vec_model_dir()
         self._thread: QThread | None = None
         self._worker: SessionWorker | None = None
         self._recognizer: WhisperRecognizer | None = None
@@ -76,6 +87,10 @@ class CaptionOverlay(QWidget):
         self._kind.setMinimumWidth(150)
         self._device = QComboBox()
         self._device.setMinimumWidth(300)
+        self._engine = QComboBox()
+        for value, text in ENGINE_CHOICES:
+            self._engine.addItem(text, value)
+        self._engine.setMinimumWidth(170)
         self._refresh = QPushButton("刷新")
         self._start = QPushButton("开始")
         self._stop = QPushButton("停止")
@@ -88,6 +103,8 @@ class CaptionOverlay(QWidget):
         row.addWidget(self._kind)
         row.addWidget(self._device, 1)
         row.addWidget(self._refresh)
+        row.addWidget(QLabel("识别"))
+        row.addWidget(self._engine)
         row.addWidget(self._start)
         row.addWidget(self._stop)
         row.addWidget(self._export)
@@ -145,12 +162,18 @@ class CaptionOverlay(QWidget):
         names = self._model_dir.name
         if self._partial_recognizer is not None:
             names += f" + {Path(partial_model_dir(self._model_dir) or '').name}"
-        self._status.setText(f"就绪，模型已加载（{names}），{self._device.count()} 个输入设备")
+        extra = "，wav2vec 2.0 可选" if self._wav2vec_dir.is_dir() else ""
+        self._status.setText(
+            f"就绪，模型已加载（{names}{extra}），{self._device.count()} 个输入设备"
+        )
 
     # ---------------------------------------------------------------- devices
 
     def _kind_value(self) -> str:
         return str(self._kind.currentData() or "mic")
+
+    def _engine_value(self) -> str:
+        return normalize_engine(self._engine.currentData())
 
     def _refresh_sources(self) -> None:
         kind = self._kind_value()
@@ -194,12 +217,19 @@ class CaptionOverlay(QWidget):
             return
         source_id = self._device.currentData()
         kind = self._kind_value()
+        engine = self._engine_value()
         if source_id is None:
             self._status.setText(
                 "请先选择一个应用窗口" if kind == "app" else "请先选择一个输入设备"
             )
             return
-        if self._recognizer is None:
+        if engine == ENGINE_WAV2VEC:
+            if not self._wav2vec_dir.is_dir():
+                self._status.setText(
+                    f"wav2vec 2.0 模型目录不存在：{self._wav2vec_dir}"
+                )
+                return
+        elif self._recognizer is None:
             self._status.setText("模型还在加载，请稍候再点开始")
             return
         if not self._model_dir.is_dir():
@@ -231,20 +261,25 @@ class CaptionOverlay(QWidget):
                 pause_duration_ms=1200,
                 speech_rms_threshold=0.02,
             ),
-            recognizer=self._recognizer,
-            partial_recognizer=self._partial_recognizer,
+            recognizer=self._recognizer if engine == ENGINE_WHISPER else None,
+            partial_recognizer=(
+                self._partial_recognizer if engine == ENGINE_WHISPER else None
+            ),
+            engine=engine,
+            wav2vec_dir=self._wav2vec_dir,
         )
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.snapshot_ready.connect(self._on_snapshot)
+        worker.capture_started.connect(self._on_capture_started)
         worker.finished.connect(self._on_finished)
         worker.failed.connect(self._on_failed)
         self._worker = worker
         self._thread = thread
         self._started_at = time.perf_counter()
         self._set_running(True)
-        self._status.setText(f"采集中（{label}）…")
+        self._status.setText(f"采集中（{label} · {self._engine.currentText()}）…")
         thread.start()
 
     def stop_capture(self) -> None:
@@ -257,9 +292,17 @@ class CaptionOverlay(QWidget):
         self._kind.setEnabled(not running)
         self._refresh.setEnabled(not running)
         self._device.setEnabled(not running)
+        self._engine.setEnabled(not running)
         self._start.setEnabled(not running)
         self._stop.setEnabled(running)
         self._export.setEnabled(False if running else bool(self._captions))
+
+    def _on_capture_started(self) -> None:
+        # Models may load inside the worker; measure the first-text delay from
+        # the moment audio actually starts flowing, not from the button click.
+        self._started_at = time.perf_counter()
+        self._first_text_at = None
+        self._status.setText("采集中…说话即可看到临时字幕")
 
     def _on_snapshot(self, snapshot: CaptionSnapshot) -> None:
         if snapshot.draft and self._first_text_at is None:
