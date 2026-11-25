@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 
@@ -38,10 +37,15 @@ from liebad.engines import (
     ENGINE_WAV2VEC,
     ENGINE_WHISPER,
     normalize_engine,
-    wav2vec_model_dir,
 )
 from liebad.export_txt import write_txt
 from liebad.ui.session_worker import SessionWorker, partial_model_dir
+from liebad.ui.settings import (
+    KIND_APPLICATION,
+    OverlaySettings,
+    resolve_wav2vec_model,
+    resolve_whisper_model,
+)
 from liebad.whisper_recognizer import WhisperRecognizer
 
 DEFAULT_MODEL_DIR = Path("models/faster-whisper-small")
@@ -64,12 +68,13 @@ class CaptionOverlay(QWidget):
         model_dir: Path | None = None,
         parent: QWidget | None = None,
         preload: bool = False,
+        settings: OverlaySettings | None = None,
+        wav2vec_dir: Path | None = None,
     ) -> None:
         super().__init__(parent)
-        self._model_dir = Path(
-            model_dir or os.environ.get(MODEL_ENV) or DEFAULT_MODEL_DIR
-        )
-        self._wav2vec_dir = wav2vec_model_dir()
+        self._settings = settings or OverlaySettings()
+        self._model_dir = resolve_whisper_model(model_dir, self._settings)
+        self._wav2vec_dir = resolve_wav2vec_model(wav2vec_dir, self._settings)
         self._thread: QThread | None = None
         self._worker: SessionWorker | None = None
         self._recognizer: WhisperRecognizer | None = None
@@ -94,6 +99,10 @@ class CaptionOverlay(QWidget):
         for value, text in ENGINE_CHOICES:
             self._engine.addItem(text, value)
         self._engine.setMinimumWidth(170)
+        self._engine.setCurrentIndex(
+            max(0, self._engine.findData(self._settings.engine))
+        )
+        self._kind.setCurrentIndex(max(0, self._kind.findData(self._settings.kind)))
         self._refresh = QPushButton("刷新")
         self._start = QPushButton("开始")
         self._stop = QPushButton("停止")
@@ -189,6 +198,12 @@ class CaptionOverlay(QWidget):
                 return
             for source in sources:
                 self._device.addItem(source.label, source.pid)
+                self._device.setItemData(
+                    self._device.count() - 1,
+                    source.process_name,
+                    Qt.ItemDataRole.UserRole + 1,
+                )
+            self._restore_device(kind)
             if not sources:
                 self._status.setText("没有找到正在播放的应用窗口")
             else:
@@ -201,10 +216,33 @@ class CaptionOverlay(QWidget):
             return
         for index, name in devices:
             self._device.addItem(f"{index} · {name}", index)
+        self._restore_device(kind)
         if not devices:
             self._status.setText("没有找到 WASAPI 输入设备")
         else:
             self._status.setText(f"就绪，{len(devices)} 个输入设备")
+
+    def _restore_device(self, kind: str) -> None:
+        """Reselect the device or application remembered from the last run."""
+
+        if kind == KIND_APPLICATION:
+            remembered = self._settings.application
+            if not remembered:
+                return
+            for index in range(self._device.count()):
+                process_name = self._device.itemData(
+                    index, Qt.ItemDataRole.UserRole + 1
+                )
+                if process_name == remembered:
+                    self._device.setCurrentIndex(index)
+                    return
+            return
+        remembered_device = self._settings.microphone
+        if remembered_device is None:
+            return
+        index = self._device.findData(remembered_device)
+        if index >= 0:
+            self._device.setCurrentIndex(index)
 
     def _move_to_top(self) -> None:
         screen = self.screen() or QApplication.primaryScreen()
@@ -239,6 +277,7 @@ class CaptionOverlay(QWidget):
         self._first_text_at = None
         self._draft.setText("")
         self._final.setText("")
+        self._remember_choice(kind, engine, source_id)
 
         if kind == "app":
             pid = int(source_id)
@@ -293,6 +332,22 @@ class CaptionOverlay(QWidget):
             self._worker.request_stop()
             self._status.setText("收尾中…")
             self._stop.setEnabled(False)
+
+    def _remember_choice(self, kind: str, engine: str, source_id: object) -> None:
+        """Persist the choices so the next launch starts where this one did."""
+
+        self._settings.engine = engine
+        self._settings.kind = kind
+        if kind == KIND_APPLICATION:
+            process_name = self._device.itemData(
+                self._device.currentIndex(), Qt.ItemDataRole.UserRole + 1
+            )
+            if process_name:
+                self._settings.application = str(process_name)
+        else:
+            self._settings.microphone = int(source_id)  # type: ignore[arg-type]
+        self._settings.whisper_model = self._model_dir
+        self._settings.wav2vec_model = self._wav2vec_dir
 
     def _set_running(self, running: bool) -> None:
         self._kind.setEnabled(not running)
