@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import contextlib
 import os
-import tempfile
 import unittest
-import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QSettings
+
+try:  # discovery starts inside tests/unit, so the helper is importable directly
+    from scratch import remove, scratch_dir
+except ImportError:  # pragma: no cover - discovery from tests/
+    from .scratch import remove, scratch_dir
 
 from liebad.engines import (
     DEFAULT_WAV2VEC_DIR,
@@ -52,9 +55,9 @@ def environment(**values: str | None):
 
 class OverlaySettingsTest(unittest.TestCase):
     def setUp(self) -> None:
-        folder = Path(tempfile.gettempdir()) / f"liebad-settings-{uuid.uuid4().hex}"
-        folder.mkdir()
-        self.addCleanup(lambda: __import__("shutil").rmtree(folder, True))
+        folder = scratch_dir("liebad-settings")
+        self.addCleanup(remove, folder)
+        self.addCleanup(setattr, self, "settings", None)
         self.path = folder / "overlay.ini"
         self.settings = OverlaySettings(self.path)
 
@@ -119,9 +122,8 @@ class OverlaySettingsTest(unittest.TestCase):
 
 class SettingsPathTest(unittest.TestCase):
     def setUp(self) -> None:
-        folder = Path(tempfile.gettempdir()) / f"liebad-path-{uuid.uuid4().hex}"
-        folder.mkdir()
-        self.addCleanup(lambda: __import__("shutil").rmtree(folder, True))
+        folder = scratch_dir("liebad-path")
+        self.addCleanup(remove, folder)
         self.folder = folder
 
     def test_environment_override_selects_the_file(self) -> None:
@@ -142,9 +144,9 @@ class SettingsPathTest(unittest.TestCase):
 
 class ResolveModelTest(unittest.TestCase):
     def setUp(self) -> None:
-        folder = Path(tempfile.gettempdir()) / f"liebad-models-{uuid.uuid4().hex}"
-        folder.mkdir()
-        self.addCleanup(lambda: __import__("shutil").rmtree(folder, True))
+        folder = scratch_dir("liebad-models")
+        self.addCleanup(remove, folder)
+        self.addCleanup(setattr, self, "settings", None)
         self.folder = folder
         self.settings = OverlaySettings(folder / "overlay.ini")
 

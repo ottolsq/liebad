@@ -2,24 +2,22 @@
 
 from __future__ import annotations
 
-import shutil
-import tempfile
 import unittest
-import uuid
-from pathlib import Path
 
 from liebad.contracts import FinalCaption
 from liebad.export_txt import write_txt
+
+try:  # discovery starts inside tests/unit, so the helper is importable directly
+    from scratch import remove, scratch_dir
+except ImportError:  # pragma: no cover - discovery from tests/
+    from .scratch import remove, scratch_dir
 
 
 class ExportTxtTest(unittest.TestCase):
     def test_export_writes_utf8_in_final_order(self):
         captions = [FinalCaption(0, "第一句，中文。"), FinalCaption(1, "第二句，English 混说。")]
-        # Default mkdir mode: the DSH sandbox cannot write inside 0700 temp dirs,
-        # so TemporaryDirectory() is unusable here.
-        folder = Path(tempfile.gettempdir()) / f"liebad-export-{uuid.uuid4().hex}"
-        folder.mkdir()
-        self.addCleanup(shutil.rmtree, folder, True)
+        folder = scratch_dir("liebad-export")
+        self.addCleanup(remove, folder)
 
         target = folder / "captions.txt"
         write_txt(target, captions)

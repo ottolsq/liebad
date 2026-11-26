@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import shutil
 import sys
-import tempfile
 import unittest
-import uuid
 import wave
 from pathlib import Path
 
@@ -15,6 +12,11 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import asr_bench  # noqa: E402
 from liebad.replay_audio import ReplayAudioSource  # noqa: E402
+
+try:  # discovery starts inside tests/unit, so the helper is importable directly
+    from scratch import remove, scratch_dir
+except ImportError:  # pragma: no cover - discovery from tests/
+    from .scratch import remove, scratch_dir
 
 
 def write_wav(path: Path, samples: list[int], rate: int = 16_000) -> None:
@@ -43,9 +45,8 @@ class ScoringTest(unittest.TestCase):
 
 class ReplayTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.folder = Path(tempfile.gettempdir()) / f"liebad-bench-{uuid.uuid4().hex}"
-        self.folder.mkdir()
-        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.folder = scratch_dir("liebad-bench")
+        self.addCleanup(remove, self.folder)
         self.wav = self.folder / "clip.wav"
         write_wav(self.wav, [1000] * 900)
 

@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 import os
-import shutil
-import tempfile
 import unittest
-import uuid
 from pathlib import Path
 from unittest import mock
 
 from liebad.whisper_recognizer import MODEL_ENV, WhisperRecognizer, model_dir_from_env
 
+try:  # discovery starts inside tests/unit, so the helper is importable directly
+    from scratch import remove, scratch_dir
+except ImportError:  # pragma: no cover - discovery from tests/
+    from .scratch import remove, scratch_dir
+
 
 def make_dir() -> Path:
-    folder = Path(tempfile.gettempdir()) / f"liebad-model-{uuid.uuid4().hex}"
-    folder.mkdir()
-    return folder
+    return scratch_dir("liebad-model")
 
 
 class ModelDirFromEnvTest(unittest.TestCase):
@@ -29,7 +29,7 @@ class ModelDirFromEnvTest(unittest.TestCase):
 
     def test_directory_without_weights_is_rejected(self) -> None:
         folder = make_dir()
-        self.addCleanup(shutil.rmtree, folder, True)
+        self.addCleanup(remove, folder)
 
         with mock.patch.dict(os.environ, {MODEL_ENV: str(folder)}):
             with self.assertRaises(FileNotFoundError) as raised:
