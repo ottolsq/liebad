@@ -1,6 +1,6 @@
 # Liebad
 
-Liebad 为 Windows 上的现场讲话、抖音桌面客户端和浏览器视频生成实时字幕：本地识别，置顶悬浮窗显示，导出 UTF-8 `.txt`。麦克风字幕原型已可运行。以下命令在 Windows、PowerShell、仓库根目录执行，解释器为 uv 装的 Python 3.12 建出的 `.venv`。
+Liebad 为 Windows 上的现场讲话、抖音桌面客户端和浏览器视频生成实时字幕：本地识别，置顶悬浮窗显示，导出 UTF-8 `.txt`。首版 `0.1.0` 已完成，兼容性以[首版阶段记录](docs/history/01-live-captions.md)中的实测场景为准。以下命令在 Windows、PowerShell、仓库根目录执行，解释器为 uv 装的 Python 3.12 建出的 `.venv`。
 
 ## 快速开始
 
