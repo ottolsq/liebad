@@ -9,7 +9,7 @@
 
 - 从仓库根目录执行；Windows PowerShell 中用 `$python = (Resolve-Path .\.venv\Scripts\python.exe).Path` 选择项目环境，模型配置见 [README](README.md)。
 - 查看仓库状态：`git status --short --untracked-files=all`。
-- 开发安装：`& $python -m pip install -e .`。启动：`& $python -m liebad`，预期显示置顶悬浮窗。
+- 开发安装：`& $python -m pip install --no-build-isolation --no-index -e .`（离线，用 `.venv` 里的 setuptools；默认隔离构建会联网下载构建依赖，慢网下像卡住）。启动：`& $python -m liebad`，预期显示置顶悬浮窗。
 - 单元测试：`& $python -m unittest discover -s tests/unit`。配置 README 所列的素材变量后，运行 `& $python -m unittest discover -s tests/integration`；跳过不算通过实际模型验证。
 - 文档校验：用可用的 Python 运行仓库外 `buildhelper` 的 `scripts/check_docs.py -root . -stage milestone`；追加 `--inventory` 查看文档归属。
 
