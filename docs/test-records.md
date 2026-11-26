@@ -65,7 +65,7 @@
 
 ### 素材 B：真人录音
 
-源文件 `C:\Users\ottol\Documents\录音\录音 (2).m4a`，346,788 B，AAC 48000 Hz 双声道，13.525 s，峰值 0.020、RMS 0.0023（约 -53 dBFS，录音电平很低）。转成 `temp\audio\recording_2.wav`（16000 Hz 单声道 16-bit，432,854 B，216,405 样本）后测得。
+一段自录的中文录音（`m4a`），346,788 B，AAC 48000 Hz 双声道，13.525 s，峰值 0.020、RMS 0.0023（约 -53 dBFS，录音电平很低）。转成 `temp\audio\recording_2.wav`（16000 Hz 单声道 16-bit，432,854 B，216,405 样本）后测得。
 
 人工参考文本：如果你是通过 API 调用 最稳妥按中文五百字 英文一千字 以内 来写
 
@@ -142,9 +142,9 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 
 1. 包配置用 `setuptools>=75` + `setuptools.build_meta`，`[tool.setuptools] package-dir = { "" = "src" }`。
 2. 首跑 8 个用例有 1 个失败：断言草稿序列恰好 2 条，实际是 `今天去上`、`今天去上海`、`今天去上明天去上海` 三条，属于测试断言过窄，删掉计数断言后通过。
-3. `pip install -e .` 在 `workspace-write` 沙箱下失败：`ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied: 'C:\Users\ottol\AppData\Local\Temp\dsh-OHTl73\pip-build-tracker-4o1ocdww\e0d3f...'`。根因与第 1 批 ensurepip 相同：pip 用 `tempfile.mkdtemp()` 建临时目录，而 CPython 在 Windows 把 `0700` 落成受保护 DACL（`icacls` 都读不到），本会话进程在受限令牌下运行，写入被拒；默认模式或 `0o777` 建出的目录继承父目录 ACL，可正常写入。
+3. `pip install -e .` 在 `workspace-write` 沙箱下失败：`ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied: '<TEMP>\dsh-*\pip-build-tracker-*\e0d3f...'`。根因与第 1 批 ensurepip 相同：pip 用 `tempfile.mkdtemp()` 建临时目录，而 CPython 在 Windows 把 `0700` 落成受保护 DACL（`icacls` 都读不到），本会话进程在受限令牌下运行，写入被拒；默认模式或 `0o777` 建出的目录继承父目录 ACL，可正常写入。
 4. 经用户确认，用一次性完全权限执行同一条 `& $python -m pip install -e .`，构建通过，随后恢复 `workspace-write`。
-5. 导出用例不用 `tempfile.TemporaryDirectory()`（同样受 0700 DACL 影响），改为在系统临时目录下用默认模式建目录，并在 `addCleanup` 里删除。
+5. 导出用例不用 `tempfile.TemporaryDirectory()`（同样受 0700 DACL 影响）；临时目录统一由 `tests/unit/scratch.py` 建在已忽略的 `temp/` 下，`addCleanup` 里带重试删除，避免残留落到仓库根。
 6. 补回归时发现缺陷：`_feed` 只派发完整 20 ms 帧，音源结束时不足一帧的尾音留在缓冲区里被丢掉，`_finalize` 拿到的是不含尾音的音频；若整段不足一帧，则完全不会调识别器。先写两条失败用例（`test_subframe_tail_reaches_recognizer_after_stop`、`test_stop_finalizes_subframe_audio_once`，均 `FAILED`），再加 `_flush_tail()` 把残余样本并入当前语段后定稿，两条转绿。
 
 ### 结果
@@ -153,7 +153,7 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 |---|---|---|
 | `& $python -m pip install -e .` | 退出码 `0` | `Successfully built liebad`、`Successfully installed liebad-0.1.0`，退出码 `0` |
 | `& $python -m pip check` | 退出码 `0` | `No broken requirements found.`，退出码 `0` |
-| `& $python -c "import liebad"` | 版本 `0.1.0`，指向 `src/liebad` | `version 0.1.0`、`file C:\Users\ottol\myproject\liebad\src\liebad\__init__.py`，退出码 `0` |
+| `& $python -c "import liebad"` | 版本 `0.1.0`，指向 `src/liebad` | `version 0.1.0`、`file <repo>\src\liebad\__init__.py`，退出码 `0` |
 | `& $python -m unittest discover -s tests/unit` | 10 个用例全过 | `Ran 10 tests in 0.052s`、`OK`，退出码 `0` |
 
 ### 命令
@@ -196,7 +196,7 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 1. 先实测 PyAV 15.1.0 的重采样行为：48 kHz 双声道 `s16` 的 4800 样本一次 `resample` 得 1584 个 16 kHz 单声道样本，`resample(None)` 再补 16 个；按 3840/1920/960/480/240/7 字节分块与整块转换逐样本一致（`maxdiff 0.000000`）。
 2. 识别器首版把 `list(mono16k)` 直接交给 `transcribe`，`faster_whisper/transcribe.py:876` 判定它不是 `np.ndarray` 后当成文件路径送 `decode_audio`，抛 `ValueError: File object has no read() method, or readable() returned False.`；改为 `np.asarray(mono16k, dtype=np.float32)`。
 3. 集成测试首跑在原始电平上断言 `最稳妥` 失败（实际 `最文破判`）。同一 WAV 与 m4a 重新解码逐样本一致（`max diff 0.000000`），同配置连跑三次结果也完全相同，乘 15 倍增益后才对；差异只在电平，于是测试先归一化到峰值 0.3 再断言。
-4. 真实设备：WASAPI 只有两个输入，`17 麦克风阵列`（英特尔智音）与 `18 耳机式麦克风 (H180 Plus (Type C))`。静音房间里 WASAPI 电平在 1e-5 量级，说话时峰值 0.05、RMS 0.008；WDM-KS 的 `26 Input (H180 Plus (Type C))` 反而一直有 50–56 Hz 底噪，RMS 0.015–0.039。默认采集端点的音量读数为 `mute False level 1.000`，排除静音或音量归零。
+4. 真实设备：WASAPI 只有两个输入，一个是内置麦克风阵列（编号 `17`），一个是 USB-C 耳机麦克风（编号 `18`）。静音房间里 WASAPI 电平在 1e-5 量级，说话时峰值 0.05、RMS 0.008；同一设备的 WDM-KS 通道（编号 `26`）反而一直有 50–56 Hz 底噪，RMS 0.015–0.039。默认采集端点的音量读数为 `mute False level 1.000`，排除静音或音量归零。
 5. 安装：`uv pip install -e .` 在写 `temp\uv-cache\builds-v0\...\liebad.egg-info` 时抛 `PermissionError: [WinError 5]`（uv 的构建临时目录同样是 0700），改用与第 2 批相同的一次性完全权限 `pip install -e .`。
 
 ### 结果
@@ -268,7 +268,7 @@ $env:LIEBAD_TEST_KEYWORD = "最稳妥"
 |---|---|---|
 | `& $python -m unittest discover -s tests/unit` | 全过 | `Ran 25 tests in 1.076s`、`OK`，退出码 `0` |
 | `& $python -m pip check` | 退出码 `0` | `No broken requirements found.` |
-| 真实麦克风 25 s 会话（设备 18） | 出临时字幕与定稿 | 起声在采集域 4.52 s，首条草稿 6.5 s（**首字约 2.0 s**），草稿每 0.8 s 更新，定稿 1 段 `今天我们来验证本币 语音专写 算算段距和准确率`，退出码 `0` |
+| 真实麦克风 25 s 会话（USB-C 耳机麦克风） | 出临时字幕与定稿 | 起声在采集域 4.52 s，首条草稿 6.5 s（**首字约 2.0 s**），草稿每 0.8 s 更新，定稿 1 段 `今天我们来验证本币 语音专写 算算段距和准确率`，退出码 `0` |
 | 停止后导出 TXT | UTF-8、顺序与定稿一致 | 单段写入 `temp\audio\ui_live.txt`，内容 `今天我们来验证本币 语音专写 算算段距和准确率`，与界面定稿逐字相同 |
 | 置顶 | 屏幕底部工作区顶部、始终置顶 | `window 1920x150 at 8,0`、`stay_on_top=True`，系统截图确认覆盖在桌面顶部 |
 | 讲话时关闭窗口 | 能正常关闭并释放麦克风 | `close took 1.83s`，`visible=False thread=None`，随后重开同一设备 1 s 采到 12,629 个样本 |
@@ -446,7 +446,7 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
   - 选 `whisper` 回归：`已完成，2 段，首字 5.6 s`，导出 `temp\audio\engine_whisper.txt` 与混合模式相同文本。
 - 同一脚本第一次实测 `首字 11.9 s`，原因是把 5.8 s 的模型加载算进了延迟；加 `capture_started` 后改为 2.7–3.0 s。
 - 排障教训：用普通函数连接 Qt 信号做记录会拿不到快照（必须用 `QObject` 的 `@Slot`），曾误判为「wav2vec 不出草稿」。
-- 记住上次选择：`temp\settings_live.py` 离屏跑一次混合模式会话后，`QSettings` 文件里得到 `engine=hybrid`、`source/kind=mic`、`source/microphone=17`、两个模型目录；另起一个 `OverlaySettings` 实例读取一致，重建窗口后引擎下拉、音源类型与麦克风都恢复到上次的值。本会话沙箱不允许写 `%APPDATA%`，路径检查自动回退到仓库根的 `.liebad-settings.ini`（已 gitignore）；另起进程读回 `hybrid / app / douyin.exe`，跨进程有效。全量单测 `Ran 72 tests in 1.404s` / `OK`。
+- 记住上次选择：`temp\settings_live.py` 离屏跑一次混合模式会话后，`QSettings` 文件里得到 `engine=hybrid`、`source/kind=mic`、`source/microphone=<编号>`、两个模型目录；另起一个 `OverlaySettings` 实例读取一致，重建窗口后引擎下拉、音源类型与麦克风都恢复到上次的值。本会话沙箱不允许写 `%APPDATA%`，路径检查自动回退到仓库根的 `.liebad-settings.ini`（已 gitignore）；另起进程读回 `hybrid / app / douyin.exe`，跨进程有效。全量单测 `Ran 72 tests in 1.404s` / `OK`。
 
 ### 限制
 
