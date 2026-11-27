@@ -454,3 +454,11 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 - 选 wav2vec 时 worker 内按需加载约 5.8 s，界面在此期间只显示「采集中…」，未做进度提示。
 - 混合模式下 wav2vec 草稿（`torch_threads=2`）与 Whisper 定稿抢 CPU，草稿从每 0.5 s 一次降到约 2 s 一次；首字仍比纯 Whisper 快（3.0 s 对 5.6 s）。
 - wav2vec 中英混说不输出英文，这一点没有随该选项改善。
+
+## 2026-11-27 首版试用反馈复测
+
+### Windows 启动与退出
+
+- 用户桌面验收通过。通过 `start.cmd` 启动，按一次 Ctrl+C 后关闭浮窗并直接返回 PowerShell，无需输入 Y/N。
+- 本机回归使用本地 Whisper，分别在预热中和就绪后向独立 Windows 控制台发送 Ctrl+C。两次均先退出应用，再返回 PowerShell 并执行下一条命令，期间未出现确认提示或 `KeyboardInterrupt`。状态栏的离屏绘制与终端输出均包含加载、预热和就绪状态。
+- 在含空格的路径下复测正常关窗，并验证启动脚本传递退出码 `0` 和 `7`。实际采集过程中按 Ctrl+C 仍待桌面验证。

@@ -4,15 +4,15 @@ Liebad 为 Windows 上的现场讲话、抖音桌面客户端和浏览器视频�
 
 ## 快速开始
 
+已有 `.venv` 和本地模型时，在仓库根目录运行 **`.\start.cmd`**，或双击 `start.cmd`。浮窗和终端会显示 Whisper 的加载、预热和就绪状态；就绪后可点「开始」。在终端按一次 **Ctrl+C**，Liebad 会收尾、关闭浮窗并返回 PowerShell，无需回答 Y/N；若正在预热，可能等到当前预热操作结束。要保留字幕，请先点「停止」，再导出。下方命令用于开发安装和单元测试。
+
 ```powershell
 $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 & $python -m pip install --no-build-isolation --no-index -e .
 & $python -m unittest discover -s tests/unit
-$env:LIEBAD_WHISPER_MODEL = ".\models\faster-whisper-small"
-& $python -m liebad
 ```
 
-窗口出现在屏幕顶部，选择音源后点「开始」边说边看字幕，点「停止」后可「导出」。首行安装只需执行一次：已带 `--no-build-isolation --no-index`，直接用 `.venv` 里的 setuptools 且不访问 PyPI（默认的隔离构建会联网下载构建依赖，网络慢时看起来像卡住）。首次启动要加载并预热 Whisper `small` 与 `base`（约 8 秒）；临时字幕默认用同级的 `faster-whisper-base`，可用 `LIEBAD_WHISPER_PARTIAL_MODEL` 指定。下次启动会恢复上次的「识别」与音源选择（存于 `%APPDATA%\Liebad\overlay.ini`，可用 `LIEBAD_SETTINGS` 指定）。
+窗口出现在屏幕顶部，选择音源后点「开始」边说边看字幕，点「停止」后可「导出」。开发安装只需执行一次：已带 `--no-build-isolation --no-index`，直接用 `.venv` 里的 setuptools 且不访问 PyPI（默认的隔离构建会联网下载构建依赖，网络慢时看起来像卡住）。首次启动要加载并预热 Whisper `small` 与 `base`（约 8 秒）；临时字幕默认用同级的 `faster-whisper-base`，可用 `LIEBAD_WHISPER_PARTIAL_MODEL` 指定。下次启动会恢复上次的「识别」与音源选择（存于 `%APPDATA%\Liebad\overlay.ini`，可用 `LIEBAD_SETTINGS` 指定）。
 
 ### 可选：wav2vec 2.0 与混合模式
 

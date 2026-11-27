@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -58,6 +59,36 @@ ENGINE_CHOICES = (
     (ENGINE_WAV2VEC, "wav2vec 2.0（首字快）"),
     (ENGINE_HYBRID, "混合（wav2vec 草稿 + Whisper 定稿）"),
 )
+
+
+class _PreviewLabel(QLabel):
+    """Show one line without letting long text resize the window."""
+
+    def __init__(self, elide: Qt.TextElideMode, prefix: str = "") -> None:
+        super().__init__()
+        self._elide = elide
+        self._prefix = prefix
+        self._full_text = ""
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt override
+        self._full_text = text
+        self.setToolTip(text)
+        self._render_text()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        self._render_text()
+
+    def _render_text(self) -> None:
+        if not self._full_text:
+            super().setText("")
+            return
+        line = " ".join(self._full_text.splitlines())
+        metrics = self.fontMetrics()
+        width = max(0, self.contentsRect().width() - metrics.horizontalAdvance(self._prefix))
+        super().setText(self._prefix + metrics.elidedText(line, self._elide, width))
 
 
 class CaptionOverlay(QWidget):
@@ -121,7 +152,8 @@ class CaptionOverlay(QWidget):
         row.addWidget(self._stop)
         row.addWidget(self._export)
 
-        self._status = QLabel("就绪")
+        self._status = _PreviewLabel(Qt.TextElideMode.ElideRight)
+        self._status.setText("就绪")
         self._draft = QLabel("")
         draft_font = QFont()
         draft_font.setPointSize(18)
@@ -151,33 +183,49 @@ class CaptionOverlay(QWidget):
 
     # ----------------------------------------------------------------- models
 
+    def _prepare_model_loading(self) -> None:
+        self._start.setEnabled(False)
+        self._status.setText("等待加载模型…")
+
     def _load_models(self) -> None:
         """Load both models up front so pressing "开始" starts capture at once."""
 
+        self._start.setEnabled(False)
+        self._show_model_status(f"正在加载模型：{self._model_dir.name}")
         try:
-            self._recognizer = WhisperRecognizer(self._model_dir, cpu_threads=6)
+            final = WhisperRecognizer(self._model_dir, cpu_threads=6)
             partial_dir = partial_model_dir(self._model_dir)
-            self._partial_recognizer = (
-                WhisperRecognizer(partial_dir, beam_size=1, cpu_threads=2)
-                if partial_dir is not None
-                else None
-            )
+            partial = None
+            if partial_dir is not None:
+                self._show_model_status(f"正在加载模型：{partial_dir.name}")
+                partial = WhisperRecognizer(partial_dir, beam_size=1, cpu_threads=2)
         except Exception as exc:
-            self._status.setText(f"加载模型失败：{type(exc).__name__}: {exc}")
-            self._start.setEnabled(False)
+            self._show_model_status(f"加载模型失败：{type(exc).__name__}: {exc}")
             return
-        # The first inference of a fresh CTranslate2 model costs several
-        # seconds of warm-up; pay it here instead of on the first draft.
-        for recognizer in (self._recognizer, self._partial_recognizer):
-            if recognizer is not None:
-                recognizer.warm_up()
+        try:
+            self._show_model_status(f"正在预热模型：{self._model_dir.name}")
+            final.warm_up()
+            if partial_dir is not None and partial is not None:
+                self._show_model_status(f"正在预热模型：{partial_dir.name}")
+                partial.warm_up()
+        except Exception as exc:
+            self._show_model_status(f"预热模型失败：{type(exc).__name__}: {exc}")
+            return
+        self._recognizer = final
+        self._partial_recognizer = partial
         names = self._model_dir.name
-        if self._partial_recognizer is not None:
-            names += f" + {Path(partial_model_dir(self._model_dir) or '').name}"
+        if partial_dir is not None:
+            names += f" + {partial_dir.name}"
         extra = "，wav2vec 2.0 可选" if self._wav2vec_dir.is_dir() else ""
-        self._status.setText(
+        self._start.setEnabled(True)
+        self._show_model_status(
             f"就绪，模型已加载（{names}{extra}），{self._device.count()} 个输入设备"
         )
+
+    def _show_model_status(self, message: str) -> None:
+        print(f"[Liebad] {message}", flush=True)
+        self._status.setText(message)
+        self._status.repaint()
 
     # ---------------------------------------------------------------- devices
 
