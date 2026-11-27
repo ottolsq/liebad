@@ -305,7 +305,7 @@ class CaptionOverlay(QWidget):
                 )
             self._restore_device(kind)
             if not sources:
-                self._status.setText("没有找到正在播放的应用窗口")
+                self._status.setText("没有找到可见的应用窗口")
             else:
                 self._status.setText(f"就绪，{len(sources)} 个应用窗口")
             return

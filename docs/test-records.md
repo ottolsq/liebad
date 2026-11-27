@@ -483,6 +483,10 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 
 - 用户桌面验收通过，确认加载和预热提示正常。探测首次运行在 60 秒内未进入预热。启用离线模式后，浮窗和终端都显示加载与预热状态，随后进入模拟采集。
 
+### 应用音源列表
+
+- 用户桌面验收通过，确认应用音源列表提示正常。列表按可见应用窗口枚举。
+
 ### Windows 拒绝导出到项目外
 
 如果同一 Windows 账号可以用 PowerShell 在「文档」创建文件，但 Liebad 报 `Permission denied`，可以运行 `icacls.exe .\.venv\Scripts\python.exe` 检查虚拟环境启动器。如果输出包含 `Low Mandatory Level`，从 Windows 开始菜单打开 PowerShell，在仓库根目录按 [README 的快速开始](../README.md#快速开始) 启动。启动脚本从 `.venv` 配置找到基础 Python，并在本次运行中加载项目代码和已安装的依赖。
