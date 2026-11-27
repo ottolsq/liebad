@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizeGrip,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -51,7 +52,7 @@ from liebad.whisper_recognizer import WhisperRecognizer
 
 DEFAULT_MODEL_DIR = Path("models/faster-whisper-small")
 MODEL_ENV = "LIEBAD_WHISPER_MODEL"
-WINDOW_HEIGHT = 150
+WINDOW_MAX_WIDTH = 760
 APP_GAIN = 1.0
 SOURCE_KINDS = (("mic", "麦克风"), ("app", "应用（进程回环）"))
 ENGINE_CHOICES = (
@@ -91,6 +92,18 @@ class _PreviewLabel(QLabel):
         super().setText(self._prefix + metrics.elidedText(line, self._elide, width))
 
 
+class _TitleLabel(QLabel):
+    """Hand title dragging to the platform's window manager."""
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if event.button() == Qt.MouseButton.LeftButton:
+            handle = self.window().windowHandle()
+            if handle is not None and handle.startSystemMove():
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+
 class CaptionOverlay(QWidget):
     """Always-on-top caption bar with microphone selection and TXT export."""
 
@@ -116,20 +129,51 @@ class CaptionOverlay(QWidget):
 
         self.setWindowTitle("Liebad 字幕")
         self.setWindowFlags(
-            Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
+            Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
         )
-        self.setMinimumHeight(WINDOW_HEIGHT)
+        self.setObjectName("captionOverlay")
+        self.setStyleSheet(
+            "#captionOverlay { background: palette(window); border: 1px solid palette(mid); }"
+        )
+
+        title = _TitleLabel(self.windowTitle())
+        close_button = QPushButton("×")
+        close_button.setObjectName("closeButton")
+        close_button.setAccessibleName("关闭浮窗")
+        close_button.setToolTip("关闭浮窗")
+        close_button.setFixedSize(32, 28)
+        close_button.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: palette(window-text);
+                border: 1px solid transparent;
+                border-radius: 4px;
+                font-size: 18px;
+            }
+            QPushButton:focus { border-color: palette(highlight); }
+            QPushButton:hover { background: #c42b38; color: white; }
+        """)
+        close_button.clicked.connect(self.close)
+        QShortcut(QKeySequence("Alt+F4"), self, self.close)
+
+        title_row = QHBoxLayout()
+        title_row.addWidget(title, 1)
+        title_row.addWidget(close_button)
 
         self._kind = QComboBox()
         for value, text in SOURCE_KINDS:
             self._kind.addItem(text, value)
-        self._kind.setMinimumWidth(150)
         self._device = QComboBox()
-        self._device.setMinimumWidth(300)
+        self._device.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._device.setMinimumContentsLength(10)
         self._engine = QComboBox()
         for value, text in ENGINE_CHOICES:
             self._engine.addItem(text, value)
-        self._engine.setMinimumWidth(170)
+
         self._engine.setCurrentIndex(
             max(0, self._engine.findData(self._settings.engine))
         )
@@ -141,35 +185,42 @@ class CaptionOverlay(QWidget):
         self._stop.setEnabled(False)
         self._export.setEnabled(False)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("音源"))
-        row.addWidget(self._kind)
-        row.addWidget(self._device, 1)
-        row.addWidget(self._refresh)
-        row.addWidget(QLabel("识别"))
-        row.addWidget(self._engine)
-        row.addWidget(self._start)
-        row.addWidget(self._stop)
-        row.addWidget(self._export)
+        source_row = QHBoxLayout()
+        source_row.addWidget(QLabel("音源"))
+        source_row.addWidget(self._kind)
+        source_row.addWidget(self._device, 1)
+        source_row.addWidget(self._refresh)
+
+        action_row = QHBoxLayout()
+        action_row.addWidget(QLabel("识别"))
+        action_row.addWidget(self._engine)
+        action_row.addStretch(1)
+        action_row.addWidget(self._start)
+        action_row.addWidget(self._stop)
+        action_row.addWidget(self._export)
 
         self._status = _PreviewLabel(Qt.TextElideMode.ElideRight)
         self._status.setText("就绪")
-        self._draft = QLabel("")
+        self._draft = _PreviewLabel(Qt.TextElideMode.ElideLeft)
         draft_font = QFont()
         draft_font.setPointSize(18)
         draft_font.setBold(True)
         self._draft.setFont(draft_font)
-        self._draft.setWordWrap(True)
-        self._draft.setMinimumHeight(52)
-        self._draft.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self._final = QLabel("")
-        self._final.setWordWrap(True)
+        self._draft.setMinimumHeight(self._draft.fontMetrics().lineSpacing())
+        self._final = _PreviewLabel(Qt.TextElideMode.ElideLeft, "定稿：")
+
+        final_row = QHBoxLayout()
+        final_row.addWidget(self._final, 1)
+        final_row.addWidget(QSizeGrip(self), alignment=Qt.AlignmentFlag.AlignBottom)
 
         layout = QVBoxLayout(self)
-        layout.addLayout(row)
+        layout.addLayout(title_row)
+        layout.addLayout(source_row)
+        layout.addLayout(action_row)
         layout.addWidget(self._status)
         layout.addWidget(self._draft)
-        layout.addWidget(self._final)
+        layout.addLayout(final_row)
+        self.setTabOrder(self._export, close_button)
 
         self._start.clicked.connect(self.start_capture)
         self._stop.clicked.connect(self.stop_capture)
@@ -177,7 +228,8 @@ class CaptionOverlay(QWidget):
         self._refresh.clicked.connect(self._refresh_sources)
         self._kind.currentIndexChanged.connect(self._refresh_sources)
         self._refresh_sources()
-        self._move_to_top()
+        self._place_window()
+        self._kind.setFocus(Qt.FocusReason.OtherFocusReason)
         if preload:
             self._load_models()
 
@@ -292,12 +344,16 @@ class CaptionOverlay(QWidget):
         if index >= 0:
             self._device.setCurrentIndex(index)
 
-    def _move_to_top(self) -> None:
+    def _place_window(self) -> None:
         screen = self.screen() or QApplication.primaryScreen()
         if screen is None:
             return
         area = screen.availableGeometry()
-        self.setGeometry(area.x(), area.y(), area.width(), WINDOW_HEIGHT)
+        width = min(WINDOW_MAX_WIDTH, area.width() * 4 // 5)
+        self.resize(width, self.sizeHint().height())
+        left = area.x() + (area.width() - self.frameGeometry().width()) // 2
+        top = area.y() + min(88, area.height() // 9)
+        self.move(left, top)
 
     # ------------------------------------------------------------------ run
 
@@ -418,10 +474,10 @@ class CaptionOverlay(QWidget):
             self._first_text_at = time.perf_counter()
         self._draft.setText(snapshot.draft)
         self._captions = snapshot.final
-        if snapshot.final:
-            self._final.setText(
-                "定稿：" + " / ".join(caption.text for caption in snapshot.final[-3:])
-            )
+        preview = " / ".join(caption.text for caption in snapshot.final[-3:])
+        if len(snapshot.final) > 3:
+            preview = "… " + preview
+        self._final.setText(preview)
         if snapshot.state is CaptionState.FAULTED and snapshot.error:
             self._handle_fault(snapshot.error)
         elif snapshot.state is CaptionState.FINISHING:
