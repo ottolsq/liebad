@@ -45,6 +45,7 @@ class SessionWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
     capture_started = Signal()
+    model_status = Signal(str)
 
     def __init__(
         self,
@@ -118,22 +119,20 @@ class SessionWorker(QObject):
     def _make_wav2vec(self):
         """Load the CTC engine; it serves finals and drafts with one instance."""
 
-        from liebad.wav2vec_recognizer import Wav2VecRecognizer
-
-        directory = require_model_dir(wav2vec_model_dir(self._wav2vec_dir))
-        model = Wav2VecRecognizer(directory, torch_threads=6)
-        # The first forward pass pays framework and allocator warm-up; do it
-        # before the source opens so the first draft is not delayed by it.
-        model.warm_up()
-        return model, None
+        return self._load_wav2vec(torch_threads=6), None
 
     def _make_wav2vec_partial(self):
         """Load the CTC engine for drafts while Whisper keeps the finals."""
 
+        return self._load_wav2vec(torch_threads=2)
+
+    def _load_wav2vec(self, *, torch_threads: int):
+        self.model_status.emit("正在加载模型：wav2vec 2.0")
         from liebad.wav2vec_recognizer import Wav2VecRecognizer
 
         directory = require_model_dir(wav2vec_model_dir(self._wav2vec_dir))
-        model = Wav2VecRecognizer(directory, torch_threads=2)
+        model = Wav2VecRecognizer(directory, torch_threads=torch_threads)
+        self.model_status.emit("正在预热模型：wav2vec 2.0")
         model.warm_up()
         return model
 

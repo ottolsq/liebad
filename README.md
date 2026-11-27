@@ -4,7 +4,7 @@ Liebad 为 Windows 上的现场讲话、抖音桌面客户端和浏览器视频�
 
 ## 快速开始
 
-已有 `.venv` 和本地模型时，在仓库根目录运行 **`.\start.cmd`**，或双击 `start.cmd`。浮窗和终端会显示 Whisper 的加载、预热和就绪状态；就绪后可点「开始」。在终端按一次 **Ctrl+C**，Liebad 会收尾、关闭浮窗并返回 PowerShell，无需回答 Y/N；若正在预热，可能等到当前预热操作结束。要保留字幕，请先点「停止」，再导出。下方命令用于开发安装和单元测试。
+已有 `.venv` 和本地模型时，在仓库根目录运行 **`.\start.cmd`**，或双击 `start.cmd`。浮窗和终端会显示 Whisper 的加载、预热和就绪状态；就绪后可点「开始」，使用 wav2vec 2.0 时也有加载和预热提示。在终端按一次 **Ctrl+C**，Liebad 会收尾、关闭浮窗并返回 PowerShell，无需回答 Y/N；若正在预热，可能等到当前预热操作结束。要保留字幕，请先点「停止」，再导出。下方命令用于开发安装和单元测试。
 
 ```powershell
 $python = (Resolve-Path .\.venv\Scripts\python.exe).Path

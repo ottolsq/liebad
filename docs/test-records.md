@@ -479,6 +479,10 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 - 离屏回归覆盖可写目录选择、保存框关闭后恢复浮窗，以及写入失败后保留定稿并重试。旧版向目录路径写入会抛出 `PermissionError`。隔离环境拒绝写入用户「文档」时，新版能提示原因，改选有写权限的位置后可保存完整定稿。
 - 在用户登录账号下复现项目外写入失败。仓库内的虚拟环境启动器继承了低完整性标签，对「文档」调用 `CreateFileW` 返回错误 5。相同账号直接运行基础 Python 时为中完整性，可以写入「文档」「桌面」和项目外测试目录。使用基础 Python 加载现有项目依赖后，实际 Qt 保存对话框将测试定稿导出到「文档」，核对完整 UTF-8 内容后清理测试文件。
 
+### wav2vec 2.0 加载与预热提示
+
+- 用户桌面验收通过，确认加载和预热提示正常。探测首次运行在 60 秒内未进入预热。启用离线模式后，浮窗和终端都显示加载与预热状态，随后进入模拟采集。
+
 ### Windows 拒绝导出到项目外
 
 如果同一 Windows 账号可以用 PowerShell 在「文档」创建文件，但 Liebad 报 `Permission denied`，可以运行 `icacls.exe .\.venv\Scripts\python.exe` 检查虚拟环境启动器。如果输出包含 `Low Mandatory Level`，从 Windows 开始菜单打开 PowerShell，在仓库根目录按 [README 的快速开始](../README.md#快速开始) 启动。启动脚本从 `.venv` 配置找到基础 Python，并在本次运行中加载项目代码和已安装的依赖。

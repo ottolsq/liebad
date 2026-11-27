@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -35,6 +37,29 @@ class EngineDispatchTest(unittest.TestCase):
         partial = SimpleNamespace(name="ctc")
         worker = make_worker("hybrid", recognizer=final, partial_recognizer=partial)
         self.assertEqual(worker._build_recognizers(), (final, partial))
+
+    def test_wav2vec_reports_model_phases_before_loading_and_warmup(self) -> None:
+        for engine, final in (("wav2vec", None), ("hybrid", object())):
+            with self.subTest(engine=engine):
+                worker = make_worker(engine, recognizer=final)
+                events = []
+                worker.model_status.connect(events.append)
+
+                def load(_directory, **_kwargs):
+                    events.append("load")
+                    return SimpleNamespace(warm_up=lambda: events.append("warm"))
+
+                modules = {"liebad.wav2vec_recognizer": SimpleNamespace(Wav2VecRecognizer=load)}
+                with (
+                    patch.dict(sys.modules, modules),
+                    patch("liebad.ui.session_worker.require_model_dir", side_effect=lambda path: path),
+                ):
+                    worker._build_recognizers()
+
+                self.assertEqual(
+                    events,
+                    ["正在加载模型：wav2vec 2.0", "load", "正在预热模型：wav2vec 2.0", "warm"],
+                )
 
     def test_unknown_engine_is_rejected_before_any_loading(self) -> None:
         with self.assertRaises(ValueError):

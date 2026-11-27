@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths, Qt, QTemporaryFile, QThread
+from PySide6.QtCore import QStandardPaths, Qt, QTemporaryFile, QThread, Slot
 from PySide6.QtGui import QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -57,7 +57,7 @@ APP_GAIN = 1.0
 SOURCE_KINDS = (("mic", "麦克风"), ("app", "应用（进程回环）"))
 ENGINE_CHOICES = (
     (ENGINE_WHISPER, "Whisper（定稿准）"),
-    (ENGINE_WAV2VEC, "wav2vec 2.0（首字快）"),
+    (ENGINE_WAV2VEC, "wav2vec 2.0（中文）"),
     (ENGINE_HYBRID, "混合（wav2vec 草稿 + Whisper 定稿）"),
 )
 
@@ -419,6 +419,7 @@ class CaptionOverlay(QWidget):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.snapshot_ready.connect(self._on_snapshot)
+        worker.model_status.connect(self._on_model_status)
         worker.capture_started.connect(self._on_capture_started)
         worker.finished.connect(self._on_finished)
         worker.failed.connect(self._on_failed)
@@ -427,7 +428,7 @@ class CaptionOverlay(QWidget):
         self._started_at = time.perf_counter()
         self._set_running(True)
         self._status.setText(
-            f"采集中（{label} · {ENGINE_LABELS[engine]}）…"
+            f"正在准备采集（{label} · {ENGINE_LABELS[engine]}）…"
         )
         thread.start()
 
@@ -461,6 +462,11 @@ class CaptionOverlay(QWidget):
         self._start.setEnabled(not running)
         self._stop.setEnabled(running)
         self._export.setEnabled(False if running else bool(self._captions))
+
+    @Slot(str)
+    def _on_model_status(self, message: str) -> None:
+        if self._stop.isEnabled():
+            self._show_model_status(message)
 
     def _on_capture_started(self) -> None:
         # Models may load inside the worker; measure the first-text delay from
