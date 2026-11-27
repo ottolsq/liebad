@@ -487,6 +487,11 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 
 - 用户桌面验收通过，确认应用音源列表提示正常。列表按可见应用窗口枚举。
 
+### 识别效果排查
+
+- 用现有 `faster-whisper-small`、CPU INT8、`language=zh`、`beam_size=5`，分别转写 3 秒全零采样，以及 3 秒、16 kHz、振幅 0.15 的 440 Hz 正弦波。输入采样为 `0.15 * sin(2 * pi * 440 * n / 16000)`。全零返回空文本，纯音返回 `字幕by索兰娅`。同一纯音的 RMS 约为 0.106，高于界面语段门限 0.02。此处为无语音音频触发的模型幻觉复现，用户当次的音频片段待核对。
+- 将测试记录第 1 批的公开普通话素材重复 8 次，中间不插入静音，合成约 48 秒连续样本，末尾追加 2 秒静音。按原速回放，使用界面的 400 ms 草稿间隔与 1200 ms 停顿设置，识别器采用 `base` 草稿和 `small` 定稿。输出 4 段，分别出现在约 16.5、28.1、40.0、51.9 秒，均有错词。本次短样本未观测到定稿相对各段结束时间的延迟持续增长，较长的真实浏览器或抖音音频待复测。
+
 ### Windows 拒绝导出到项目外
 
 如果同一 Windows 账号可以用 PowerShell 在「文档」创建文件，但 Liebad 报 `Permission denied`，可以运行 `icacls.exe .\.venv\Scripts\python.exe` 检查虚拟环境启动器。如果输出包含 `Low Mandatory Level`，从 Windows 开始菜单打开 PowerShell，在仓库根目录按 [README 的快速开始](../README.md#快速开始) 启动。启动脚本从 `.venv` 配置找到基础 Python，并在本次运行中加载项目代码和已安装的依赖。
