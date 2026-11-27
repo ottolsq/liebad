@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import QStandardPaths, Qt, QTemporaryFile, QThread
 from PySide6.QtGui import QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -525,9 +525,28 @@ class CaptionOverlay(QWidget):
     # --------------------------------------------------------------- export
 
     def _choose_export(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self, "导出字幕", "captions.txt", "文本文件 (*.txt)"
+        documents = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DocumentsLocation
         )
+        folder = Path.cwd()
+        if documents:
+            # The known folder can belong to a different Windows account.
+            probe = QTemporaryFile(str(Path(documents) / "liebad-export-XXXXXX.tmp"))
+            if probe.open():
+                folder = Path(documents)
+                probe.remove()
+        was_visible = self.isVisible()
+        self.hide()
+        try:
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "导出字幕",
+                str(folder / "captions.txt"),
+                "文本文件 (*.txt)",
+                options=QFileDialog.Option.DontUseNativeDialog,
+            )
+        finally:
+            self.setVisible(was_visible)
         if path:
             self.export_to(Path(path))
 
@@ -535,7 +554,12 @@ class CaptionOverlay(QWidget):
         if not self._captions:
             self._status.setText("还没有定稿可导出")
             return
-        write_txt(path, self._captions)
+        try:
+            write_txt(path, self._captions)
+        except OSError as exc:
+            detail = exc.strerror or str(exc)
+            self._status.setText(f"导出失败：{detail}。请选择其他位置重试。{path}")
+            return
         self._status.setText(f"已导出 {len(self._captions)} 段到 {path}")
 
     # ---------------------------------------------------------------- window

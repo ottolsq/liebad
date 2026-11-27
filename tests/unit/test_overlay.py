@@ -4,12 +4,13 @@ import io
 import os
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from PySide6.QtCore import Qt, qInstallMessageHandler
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QFileDialog, QPushButton
 
 from liebad.contracts import CaptionSnapshot, CaptionState, FinalCaption
 from liebad.ui.overlay import CaptionOverlay
@@ -155,3 +156,51 @@ class OverlayTest(unittest.TestCase):
         finals = tuple(FinalCaption(i, str(i)) for i in range(5))
         self.overlay._on_snapshot(CaptionSnapshot(CaptionState.COMPLETED, "", finals))
         self.assertEqual(self.overlay._final.text(), "定稿：… 2 / 3 / 4")
+
+    def test_invalid_destination_reports_error_and_preserves_retry(self):
+        overlay = self.overlay
+        finals = (FinalCaption(1, "定稿"),)
+        overlay._on_finished(CaptionSnapshot(CaptionState.COMPLETED, "", finals))
+        overlay.export_to(self.folder)
+        self.assertIn("导出失败", overlay._status.text())
+        self.assertTrue(overlay._export.isEnabled())
+        path = self.folder / "字幕.txt"
+        with patch("liebad.ui.overlay.QFileDialog.getSaveFileName", return_value=(str(path), "")):
+            overlay._choose_export()
+        self.assertEqual(path.read_text(encoding="utf-8"), "定稿\n")
+        self.assertIn("已导出", overlay._status.text())
+
+    def test_export_dialog_uses_working_directory_when_documents_is_not_writable(self):
+        with (
+            patch("liebad.ui.overlay.QStandardPaths.writableLocation", return_value=str(self.folder)),
+            patch("PySide6.QtCore.QTemporaryFile.open", return_value=False),
+            patch("liebad.ui.overlay.QFileDialog.getSaveFileName", return_value=("", "")) as dialog,
+        ):
+            self.overlay._choose_export()
+        self.assertEqual(Path(dialog.call_args.args[2]), Path.cwd() / "captions.txt")
+        self.assertEqual(dialog.call_args.kwargs.get("options"), QFileDialog.Option.DontUseNativeDialog)
+
+    def test_export_dialog_prefers_documents_if_writable_and_leaves_no_probe(self):
+        with (
+            patch("liebad.ui.overlay.QStandardPaths.writableLocation", return_value=str(self.folder)),
+            patch("liebad.ui.overlay.QFileDialog.getSaveFileName", return_value=("", "")) as dialog,
+        ):
+            before = set(self.folder.iterdir())
+            self.overlay._choose_export()
+        self.assertEqual(Path(dialog.call_args.args[2]), self.folder / "captions.txt")
+        self.assertEqual(set(self.folder.iterdir()), before)
+
+    def test_export_hides_overlay_while_save_dialog_is_open_and_restores_it_on_cancel(self):
+        overlay = self.overlay
+        finals = (FinalCaption(1, "保留定稿"),)
+        overlay._on_finished(CaptionSnapshot(CaptionState.COMPLETED, "", finals))
+
+        def cancel_save(*args, **kwargs):
+            self.assertFalse(overlay.isVisible())
+            return "", ""
+
+        with patch("liebad.ui.overlay.QFileDialog.getSaveFileName", side_effect=cancel_save):
+            overlay._choose_export()
+        self.assertTrue(overlay.isVisible())
+        self.assertTrue(overlay._export.isEnabled())
+        self.assertEqual(overlay._captions, finals)

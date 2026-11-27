@@ -12,7 +12,7 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 & $python -m unittest discover -s tests/unit
 ```
 
-悬浮窗默认在屏幕上方居中并留出边距。可拖动标题栏移动浮窗，或拖动右下角调整大小。选择音源后点「开始」，长字幕以 `…` 省略较早的文字，优先显示末尾。点「停止」后可将完整定稿导出为 UTF-8 `.txt`。开发安装只需执行一次：已带 `--no-build-isolation --no-index`，直接用 `.venv` 里的 setuptools 且不访问 PyPI（默认的隔离构建会联网下载构建依赖，网络慢时看起来像卡住）。首次启动要加载并预热 Whisper `small` 与 `base`（约 8 秒）；临时字幕默认用同级的 `faster-whisper-base`，可用 `LIEBAD_WHISPER_PARTIAL_MODEL` 指定。下次启动会恢复上次的「识别」与音源选择（存于 `%APPDATA%\Liebad\overlay.ini`，可用 `LIEBAD_SETTINGS` 指定）。
+悬浮窗默认在屏幕上方居中并留出边距。可拖动标题栏移动浮窗，或拖动右下角调整大小。选择音源后点「开始」，长字幕以 `…` 省略较早的文字，优先显示末尾。点「停止」后可将完整定稿导出为 UTF-8 `.txt`。保存对话框优先打开可写的「文档」目录，无法写入时从启动目录打开。保存框打开时浮窗暂时隐藏。可以选择任何当前账号有写入权限的位置。写入失败时可在窗口中查看原因，并重新选择路径。如果用自己的 Windows 账号启动后仍无法写入「文档」，见[项目外导出排查](docs/test-records.md#windows-拒绝导出到项目外)。开发安装只需执行一次：已带 `--no-build-isolation --no-index`，直接用 `.venv` 里的 setuptools 且不访问 PyPI（默认的隔离构建会联网下载构建依赖，网络慢时看起来像卡住）。首次启动要加载并预热 Whisper `small` 与 `base`（约 8 秒）；临时字幕默认用同级的 `faster-whisper-base`，可用 `LIEBAD_WHISPER_PARTIAL_MODEL` 指定。下次启动会恢复上次的「识别」与音源选择（存于 `%APPDATA%\Liebad\overlay.ini`，可用 `LIEBAD_SETTINGS` 指定）。
 
 ### 可选：wav2vec 2.0 与混合模式
 
