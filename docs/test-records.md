@@ -460,5 +460,9 @@ $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
 ### Windows 启动与退出
 
 - 用户桌面验收通过。通过 `start.cmd` 启动，按一次 Ctrl+C 后关闭浮窗并直接返回 PowerShell，无需输入 Y/N。
+- 用户补测通过。实际采集中按一次 Ctrl+C，浮窗关闭并直接返回 PowerShell。
 - 本机回归使用本地 Whisper，分别在预热中和就绪后向独立 Windows 控制台发送 Ctrl+C。两次均先退出应用，再返回 PowerShell 并执行下一条命令，期间未出现确认提示或 `KeyboardInterrupt`。状态栏的离屏绘制与终端输出均包含加载、预热和就绪状态。
-- 在含空格的路径下复测正常关窗，并验证启动脚本传递退出码 `0` 和 `7`。实际采集过程中按 Ctrl+C 仍待桌面验证。
+- 在含空格的路径下复测正常关窗，并验证启动脚本传递退出码 `0` 和 `7`。
+- 关闭回归观察到 Qt 事件循环正常返回，受控音频流测试中采集线程结束后进程退出。
+- 旧版 Ctrl+C 复现中，Whisper 预热时发出控制台事件会输出 `KeyboardInterrupt`，Python 未退出。第一次修复后 Python 能在预热结束时正常退出，批处理仍可能显示终止确认。
+- 旧版 `start.cmd` 的批处理确认测试：用独立 Windows 控制台启动真实 Whisper，在预热中选 `Y`、就绪后选 `N` 两次测试均观察到：应用先正常退出，随后 Windows 显示批处理确认，未输入前不返回提示符，输入后 PowerShell 能执行下一条命令。`N` 不会恢复已退出的应用。
